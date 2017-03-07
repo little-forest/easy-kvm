@@ -1,0 +1,434 @@
+#!/bin/bash
+#===============================================================================
+# easy-kvm : 新しい仮想マシンを作成する
+# Date     : 2015/4/19 Start
+# Copyright: Original code by Yusuke Komori.
+#                       Copyright (c) 2015. Yusuke Komori, All rights reserved.
+#===============================================================================
+
+SCRIPT_BASE=`echo $(cd $(dirname $0); pwd)`
+SCRIPT_NAME=`basename $0`
+
+# defaults
+NUM_CPU=2
+MEM_SIZE=1024
+DISK_SIZE=30
+SWAP_SIZE=2048
+
+BOOT_PARTITION_SIZE=300
+KS_OWNER=apache
+
+OS_LOCATION_CENTOS5=http://ftp.iij.ad.jp/pub/linux/centos/5.11/os/x86_64/
+OS_LOCATION_CENTOS6=http://ftp.iij.ad.jp/pub/linux/centos/6.5/os/x86_64
+OS_LOCATION_CENTOS7=http://ftp.iij.ad.jp/pub/linux/centos/7/os/x86_64/
+
+ISO_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
+OS_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/os/x86_64/
+
+KS_BASE=/var/httpd/htdocs/ks
+VOL_BASE=/var/lib/libvirt/images
+POOL=default
+
+TPL_KS_DIR="${SCRIPT_BASE}/template/kickstart"
+TPL_PS_DIR="${SCRIPT_BASE}/template/post-script"
+
+#-------------------------------------------------------------------------------
+#- common functions ------------------------------------------------------------
+
+__setupcolor() { #{{{
+  # Escape sequence
+  ESC="\e["
+  ESCEND=m
+  C_OFF=${ESC}${ESCEND}
+
+  # normal
+  C_BLACK="${ESC}30${ESCEND}"
+  C_RED="${ESC}31${ESCEND}"
+  C_GREEN="${ESC}32${ESCEND}"
+  C_YELLOW="${ESC}33${ESCEND}"
+  C_BLUE="${ESC}34${ESCEND}"
+  C_MAGENTA="${ESC}35${ESCEND}"
+  C_CYAN="${ESC}36${ESCEND}"
+  C_WHITE="${ESC}37${ESCEND}"
+
+  RES_COL=60
+  MOVE_TO_COL="echo -en \\033[${RES_COL}G"
+}
+#}}}
+
+__show_ok() { #{{{
+  [ "${SILENT_MODE}" ] && return
+  [[ "$1" && "$1" -gt 0 ]] && echo -en "\\033[${1}G"
+  echo -en "[ ${C_GREEN}OK${C_OFF}"
+  [ "$2" ] && echo " ]$2" || echo " ]"
+}
+#}}}
+
+__show_info() { #{{{
+  [[ -n "${SILENT_MODE}" ]] && return
+  [[ "$1" == "-n" ]] && echo -en "${C_CYAN}${2}${C_OFF}" || echo -e "${C_CYAN}${1}${C_OFF}"
+}
+#}}}
+
+__show_error() { #{{{
+  echo -e "[${C_RED}ERROR${C_OFF}] $1"
+}
+#}}}
+
+__error_end() { #{{{
+  __show_error "$1"; exit 1
+}
+#}}}
+
+__confirm() { #{{{
+  [[ "$1" != "" ]] && echo -en "$1" || echo -n "OK?"
+  echo -n " (y/n) "
+
+  while :; do
+    read -s -n 1 CHAR
+    case $CHAR in
+      y|Y) RESULT=0; break ;;
+      n|N) RESULT=1; break ;;
+      *)   ;;
+    esac
+  done
+
+  echo $CHAR
+  return $RESULT
+}
+#}}}
+
+#-------------------------------------------------------------------------------
+#- functions -------------------------------------------------------------------
+
+# usage
+_usage() { #{{{
+  [ "$1" ] && __show_error "$1"
+  echo "usege : "
+  echo "  setup で Kickstart 用 config ファイルを作成し、"
+  echo "  create で config ファイルを元に仮想マシンを作成します。"
+  echo ""
+  echo "  $SCRIPT_NAME setup KS_CFG_PATH -w -h HOST_NAME -o OS [-c VCPUS] "
+  echo "                     [-m MEMORY_SIZE] [-d DISK_SIZE] -i IP_ADDR/NET_MASK "
+  echo "                     [-g GATEWAY] [-n NAME_SERVER] [-p ISO_PATH]"
+  echo "    KS_CFG_PATH にKickstart用設定ファイルを出力します."
+  echo ""
+  echo "  $SCRIPT_NAME create (KS_URL|KS_FILE) [-w] [-p ISO_PATH]"
+  echo "    KS_URL または KS_FILE で指定したパスの Kickstart 用設定ファイル"
+  echo "    を元に仮想マシンを構成します."
+  echo "          -w : Why run (show only virt-install command line)"
+  echo "          -h : host(kvm domain) name"
+  echo "          -o : OS (centos5 / centos6 / centos7 / centos72)"
+  echo "          -c : number of virtual cpus (default:$NUM_CPU)"
+  echo "          -m : memory size (MBytes) (defaullt:$MEM_SIZE Mbytes)"
+  echo "          -d : disk size (GBytes) (default:$DISK_SIZE Gbytes)"
+  echo "          -i : ip address and net mask (ex. 192.168.122.2/24)"
+  echo "          -g : Gateway's ip address"
+  echo "          -n : Name server's ip address"
+  echo "          -p : OS's iso image path"
+  exit 1
+}
+#}}}
+
+
+################################################################################
+# setup mode
+################################################################################
+_setup() { #{{{
+  # check arguments
+  # hostname
+  [[ ! "${HOST_NAME}" ]] && _usage "hostname is not specified."
+
+  # os
+  case "$OS" in
+    centos5) OS_LOCATION="$OS_LOCATION_CENTOS5"
+             OS_VALIANT=rhel5.4
+      ;;
+    centos6) OS_LOCATION="$OS_LOCATION_CENTOS6"
+             OS_VALIANT=rhel6
+      ;;
+    centos7) OS_LOCATION="$OS_LOCATION_CENTOS7"
+             OS_VALIANT=rhel7
+      ;;
+    centos72) OS_LOCATION="$OS_LOCATION_CENTOS72"
+             OS_VALIANT=rhel7
+      ;;
+    *) _usage "$OS is not supported";
+      ;;
+  esac
+
+  # network config
+  IP_ADDR=`echo $IP | sed -re 's|(.+)/(.+)|\1|'`
+  NET_MASK=`echo $IP | sed -re 's|(.+)/(.+)|\2|'`
+  [[ "$IP_ADDR" == "$NET_MASK" ]] && NET_MASK=
+  case "$NET_MASK" in
+    32) NET_MASK=255.255.255.255
+      ;;
+    24) NET_MASK=255.255.255.0
+      ;;
+    16) NET_MASK=255.255.0.0
+      ;;
+    8) NET_MASK=255.0.0.0
+      ;;
+  esac
+
+  if [[ ! "$GATEWAY" ]]; then
+    GATEWAY=`echo $IP_ADDR | sed -re 's/([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.[0-9]{1,3}/\1.1/'`
+  fi
+
+  [[ ! "$NAME_SERVER" ]] && NAME_SERVER="$GATEWAY"
+
+  # disk
+  DISK_SIZE_MB=`expr "${DISK_SIZE}" '*' 1024`
+
+  # check iso file
+  [[ "$ISO_PATH" ]] && [[ ! -f "$ISO_PATH" ]] && __error_end "Iso file is not found. : $ISO_PATH"
+
+  # temlate
+  KS_TEMPLATE="${TPL_KS_DIR}/${OS}.tpl"
+  [[ ! -f "$KS_TEMPLATE" ]] && __error_end "Kick-start template file is not found. : $KS_TEMPLATE"
+  POST_SCRIPT_TEMPLATE="${TPL_PS_DIR}/post-script_${OS}.tpl"
+  [[ ! -f "$POST_SCRIPT_TEMPLATE" ]] && __error_end "Post-script template file is not found. : $POST_SCRIPT_TEMPLATE"
+
+
+  echo -e "${C_CYAN}$SCRIPT_NAME : $CMD${C_OFF}"
+
+  echo -e "${C_CYAN}Hostname       ${C_OFF}: $HOST_NAME"
+  echo -e "${C_CYAN}OS             ${C_OFF}: $OS"
+  echo -e "${C_CYAN}OS location    ${C_OFF}: $OS_LOCATION"
+  echo -e "${C_CYAN}ISO path       ${C_OFF}: $ISO_PATH"
+  echo -e "${C_CYAN}VCPUs          ${C_OFF}: $NUM_CPU"
+  echo -e "${C_CYAN}Ram(MB)        ${C_OFF}: $MEM_SIZE"
+  echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE (${DISK_SIZE_MB} Mbytes)"
+  echo -e "${C_CYAN}Swap(MB)       ${C_OFF}: $SWAP_SIZE"
+  echo -e "${C_CYAN}IP address     ${C_OFF}: $IP_ADDR"
+  echo -e "${C_CYAN}netmask        ${C_OFF}: $NET_MASK"
+  echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
+  echo -e "${C_CYAN}Name server    ${C_OFF}: $NAME_SERVER"
+  echo ''
+  echo -en "${C_CYAN}Install from   ${C_OFF}: "
+  [[ "${ISO_PATH}" ]] && echo "${ISO_PATH}" || echo "${OS_LOCATION}"
+
+  __confirm "Are you sure ?" || exit
+
+  # create Kickstart config
+  # Check kickstart path
+  [[ ! -d "`dirname ${KS_PATH}`" ]] && __error_end "Directory not found. : `dirname ${KS_PATH}`"
+  if [[ -f "$KS_PATH" ]]; then
+    __confirm "$KS_PATH is already exists. Create it anyway?" || exit
+    rm -f "$KS_PATH"
+  fi
+
+  echo -e "${C_GREEN}Creating kick start configuration... ${C_OFF}"
+  TMPFILE=`mktemp -p /dev/shm`
+  echo "# param HOST_NAME=$HOST_NAME" >> "$KS_PATH"
+  echo "# param NUM_CPU=$NUM_CPU" >> "$KS_PATH"
+  echo "# param MEM_SIZE=$MEM_SIZE" >> "$KS_PATH"
+  echo "# param DISK_SIZE=$DISK_SIZE" >> "$KS_PATH"
+  echo "# param OS_VALIANT=$OS_VALIANT" >> "$KS_PATH"
+  echo "# param OS_LOCATION=$OS_LOCATION" >> "$KS_PATH"
+  echo "# param ISO_PATH=$ISO_PATH" >> "$KS_PATH"
+
+  cat $KS_TEMPLATE $POST_SCRIPT_TEMPLATE | sed -re "s/%\{HOST_NAME\}/${HOST_NAME}/g" \
+    -e "s/%\{IP_ADDR\}/${IP_ADDR}/g" \
+    -e "s/%\{NET_MASK\}/${NET_MASK}/g" \
+    -e "s/%\{GATEWAY\}/${GATEWAY}/g" \
+    -e "s/%\{NS\}/${NAME_SERVER}/g" \
+    -e "s/%\{BOOT_PARTITION_SIZE\}/${BOOT_PARTITION_SIZE}/g" \
+    -e "s/%\{DISK_SIZE\}/${DISK_SIZE_MB}/g" \
+    -e "s/%\{SWAP_SIZE\}/${SWAP_SIZE}/g" \
+    -e "s|%\{OS_LOCATION\}|${OS_LOCATION}|g" \
+    -e "s|%\{ISO_PATH\}|${ISO_PATH}|g" \
+    > $TMPFILE
+
+  if [ "${ISO_PATH}" ]; then
+    # install from iso file
+    sed -i -re 's/#cdrom/cdrom/' $TMPFILE
+  else
+    # install from network
+    sed -i -re 's/#url/url/' $TMPFILE
+  fi
+
+  cat "$TMPFILE" >> "$KS_PATH"
+  id "$KS_OWNER" > /dev/null 2>&1
+  if [ "$?" -eq 0 ]; then
+    chown ${KS_OWNER}.${KS_OWNER} "$KS_PATH"
+  fi
+  chmod +r "$KS_PATH"
+  echo -e "${C_CYAN}Kick start configuration was created as${C_OFF} $KS_PATH"
+  rm $TMPFILE
+
+  exit 0
+}
+#}}}
+
+################################################################################
+# create mode
+################################################################################
+_create() { #{{{
+  [[ "${KS_URL}" =~ ^https?://.+ ]] && KS_SRC=http || KS_SRC=file
+
+  # check KS_URL
+  TMPFILE=`mktemp -p /dev/shm`
+  if [[ ${KS_SRC} == http ]]; then
+    echo -en "${C_GREEN}Checking kick start url... ${C_OFF}"
+    wget -O "$TMPFILE" "$KS_URL" > /dev/null 2>&1; RET=$?
+    if [[ "$RET" -gt 0 ]] || [[ "`ls -la $TMPFILE | awk '{print $5}'`" -eq 0 ]]; then
+      echo ''
+      __show_error "$KS_URL is not found."
+      [[ -f "$TMPFILE" ]] && rm -f "$TMPFILE"
+      exit 1
+    fi
+    echo -e " [ ${C_GREEN}OK${C_OFF} ]"
+  elif [ ${KS_SRC} == file ]; then
+    echo -en "${C_GREEN}Checking kick start file... ${C_OFF}"
+    [[ ! -f "$KS_URL" ]] && __error_end "Kick start file is not exists. : $KS_URL"
+    cp "$KS_URL" "$TMPFILE"
+  fi
+
+  # load paramters
+  echo -en "${C_GREEN}Loading parameters... ${C_OFF}"
+  eval `cat "$TMPFILE" | egrep "^# param" | sed -re 's/^# param //'`
+  echo -e " [ ${C_GREEN}OK${C_OFF} ]"
+
+  [[ -f "$TMPFILE" ]] && rm -f "$TMPFILE"
+
+  # check iso file
+  if [ "${ISO_PATH}" ]; then
+    [ -f "${ISO_PATH}" ] || __error_end "File not found. : ${ISO_PATH}"
+    sudo -u qemu test -r "${ISO_PATH}"
+    [[ ! $? -eq 0 ]] && __error_end "qemu user can't access iso file. : ${ISO_PATH}"
+    INSTALL_FROM="--location=${ISO_PATH}"
+  else
+    INSTALL_FROM="--location=${OS_LOCATION}"
+  fi
+
+  # check volume
+  # TODO ボリューム名が .qcow2 の場合にチェックできていない
+  VOLUME=${VOL_BASE}/${HOST_NAME}.img
+  virsh vol-list --pool=$POOL | grep "$VOLUME"
+  [ $? -eq 0 ] && _error_end "Volume is already exists. : $VOLUME"
+  [ -f "$VOLUME" ] && __error_end "Volume image file is already exists. : $VOLUME"
+
+  # check iso file
+  [[ "${ISO_PATH}" ]] && [[ ! -f "${ISO_PATH}" ]] && _error_end "ISO file is not found. : ISO_PATH"
+
+  # confirm
+  echo -e "${C_CYAN}$SCRIPT_NAME : $CMD${C_OFF}"
+  echo -e "${C_CYAN}Hostname       ${C_OFF}: $HOST_NAME"
+  echo -e "${C_CYAN}OS Valiant     ${C_OFF}: $OS_VALIANT"
+  if [ ! "$ISO_PATH" ]; then
+    echo -e "${C_CYAN}OS location    ${C_OFF}: $OS_LOCATION"
+  else
+    echo -e "${C_CYAN}ISO file path  ${C_OFF}: $ISO_PATH"
+  fi
+  echo -e "${C_CYAN}VCPUs          ${C_OFF}: $NUM_CPU"
+  echo -e "${C_CYAN}Ram(MB)        ${C_OFF}: $MEM_SIZE"
+  echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE"
+  echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
+  echo -e "${C_CYAN}Volume         ${C_OFF}: $VOLUME"
+  echo -e "${C_CYAN}Install from   ${C_OFF}: ${INSTALL_FROM}" | sed -re "s/(--location=|--cdrom=)//"
+  echo ''
+
+  if [ ! "$WHY_RUN" ]; then
+    __confirm "Are you sure ?" || exit
+  fi
+
+  # Create VM
+  if [[ "$KS_SRC" == file ]]; then
+    INITRD_PARAM="--initrd-inject=$KS_URL"
+    KS_URL=file:/`basename "$KS_URL"`
+  fi
+
+  VIRT_OPT=`cat << END | tr "\n" " "
+--connect qemu:///system
+--name $HOST_NAME
+--vcpus=$NUM_CPU
+--ram $MEM_SIZE
+--disk pool=${POOL},bus=virtio,format=qcow2,size=$DISK_SIZE
+--network=network:default,model=virtio
+--os-variant=$OS_VALIANT
+--accelerate
+--nographics
+${INITRD_PARAM}
+${INSTALL_FROM}
+--extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
+END
+`
+
+  # execute virt-install
+  if [ ! "$WHY_RUN" ]; then
+    echo "Everything OK. Start virt-install..."
+    virt-install \
+      --connect qemu:///system \
+      --name $HOST_NAME \
+      --vcpus=$NUM_CPU \
+      --ram $MEM_SIZE \
+      --disk pool=${POOL},bus=virtio,format=qcow2,size=$DISK_SIZE \
+      --network=network:default,model=virtio \
+      --os-variant=$OS_VALIANT \
+      --accelerate \
+      --nographics \
+      ${INITRD_PARAM} \
+      ${INSTALL_FROM} \
+      --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
+  else
+    # dry run
+    echo "virt-install $VIRT_OPT"
+  fi
+}
+#}}}
+
+# check command
+[[ $# -lt 2 ]] && _usage
+case "$1" in
+  setup) CMD=setup
+    KS_PATH="$2"
+    shift 2
+    ;;
+  create) CMD=create
+    KS_URL="$2"
+    shift 2
+    ;;
+  *) _usage
+    ;;
+esac
+
+# Get options
+while getopts :wh:o:c:m:d:i:g:n:p:H OPT; do
+  case "$OPT" in
+    w) WHY_RUN=yes
+      ;;
+    h) HOST_NAME="$OPTARG"
+      ;;
+    o) OS="$OPTARG"
+      ;;
+    c) NUM_CPU="$OPTARG"
+      ;;
+    m) MEM_SIZE="$OPTARG"
+      ;;
+    d) DISK_SIZE="$OPTARG"
+      ;;
+    i) IP="$OPTARG"
+      ;;
+    g) GATEWAY="$OPTARG"
+      ;;
+    n) NAME_SERVER="$OPTARG"
+      ;;
+    p) ISO_PATH="$OPTARG"
+      ;;
+    \?|H) _usage
+      ;;
+  esac
+done
+shift `expr $OPTIND - 1`
+
+case "$CMD" in
+  setup)  _setup ;;
+  create) _create ;;
+esac
+
+exit 0
+
+
+# vim: ts=2 sw=2 sts=2 et nu foldmethod=marker
