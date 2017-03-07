@@ -201,6 +201,7 @@ _setup() { #{{{
   echo -e "${C_CYAN}Ram(MB)        ${C_OFF}: $MEM_SIZE"
   echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE (${DISK_SIZE_MB} Mbytes)"
   echo -e "${C_CYAN}Swap(MB)       ${C_OFF}: $SWAP_SIZE"
+  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
   echo -e "${C_CYAN}IP address     ${C_OFF}: $IP_ADDR"
   echo -e "${C_CYAN}netmask        ${C_OFF}: $NET_MASK"
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
@@ -225,6 +226,7 @@ _setup() { #{{{
   echo "# param NUM_CPU=$NUM_CPU" >> "$KS_PATH"
   echo "# param MEM_SIZE=$MEM_SIZE" >> "$KS_PATH"
   echo "# param DISK_SIZE=$DISK_SIZE" >> "$KS_PATH"
+  echo "# param STORAGE_FOTMAT=$STORAGE_FOTMAT" >> "$KS_PATH"
   echo "# param OS_VALIANT=$OS_VALIANT" >> "$KS_PATH"
   echo "# param OS_LOCATION=$OS_LOCATION" >> "$KS_PATH"
   echo "# param ISO_PATH=$ISO_PATH" >> "$KS_PATH"
@@ -295,7 +297,7 @@ _create() { #{{{
 
   # check iso file
   if [ "${ISO_PATH}" ]; then
-    [ -f "${ISO_PATH}" ] || __error_end "File not found. : ${ISO_PATH}"
+    [[ -f "${ISO_PATH}" ]] || __error_end "File not found. : ${ISO_PATH}"
     sudo -u qemu test -r "${ISO_PATH}"
     [[ ! $? -eq 0 ]] && __error_end "qemu user can't access iso file. : ${ISO_PATH}"
     INSTALL_FROM="--location=${ISO_PATH}"
@@ -307,8 +309,8 @@ _create() { #{{{
   # TODO ボリューム名が .qcow2 の場合にチェックできていない
   VOLUME=${VOL_BASE}/${HOST_NAME}.img
   virsh vol-list --pool=$POOL | grep "$VOLUME"
-  [ $? -eq 0 ] && _error_end "Volume is already exists. : $VOLUME"
-  [ -f "$VOLUME" ] && __error_end "Volume image file is already exists. : $VOLUME"
+  [[ $? -eq 0 ]] && _error_end "Volume is already exists. : $VOLUME"
+  [[ -f "$VOLUME" ]] && __error_end "Volume image file is already exists. : $VOLUME"
 
   # check iso file
   [[ "${ISO_PATH}" ]] && [[ ! -f "${ISO_PATH}" ]] && _error_end "ISO file is not found. : ISO_PATH"
@@ -327,6 +329,7 @@ _create() { #{{{
   echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE"
   echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
   echo -e "${C_CYAN}Volume         ${C_OFF}: $VOLUME"
+  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
   echo -e "${C_CYAN}Install from   ${C_OFF}: ${INSTALL_FROM}" | sed -re "s/(--location=|--cdrom=)//"
   echo ''
 
@@ -345,7 +348,7 @@ _create() { #{{{
 --name $HOST_NAME
 --vcpus=$NUM_CPU
 --ram $MEM_SIZE
---disk pool=${POOL},bus=virtio,format=qcow2,size=$DISK_SIZE
+--disk pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=$DISK_SIZE
 --network=network:default,model=virtio
 --os-variant=$OS_VALIANT
 --accelerate
@@ -364,7 +367,7 @@ END
       --name $HOST_NAME \
       --vcpus=$NUM_CPU \
       --ram $MEM_SIZE \
-      --disk pool=${POOL},bus=virtio,format=qcow2,size=$DISK_SIZE \
+      --disk pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=$DISK_SIZE \
       --network=network:default,model=virtio \
       --os-variant=$OS_VALIANT \
       --accelerate \
@@ -378,6 +381,8 @@ END
   fi
 }
 #}}}
+
+__setupcolor
 
 # check command
 [[ $# -lt 2 ]] && _usage
@@ -395,7 +400,7 @@ case "$1" in
 esac
 
 # Get options
-while getopts :wh:o:c:m:d:i:g:n:p:H OPT; do
+while getopts :wh:o:c:m:f:d:i:g:n:p:H OPT; do
   case "$OPT" in
     w) WHY_RUN=yes
       ;;
@@ -406,6 +411,13 @@ while getopts :wh:o:c:m:d:i:g:n:p:H OPT; do
     c) NUM_CPU="$OPTARG"
       ;;
     m) MEM_SIZE="$OPTARG"
+      ;;
+    f) STORAGE_FOTMAT="$OPTARG"
+      case "$STORAGE_FOTMAT" in
+        qcow2) ;;
+        raw) ;;
+        *) __error_end "Invalid storage format. : $STORAGE_FOTMAT" ;;
+      esac
       ;;
     d) DISK_SIZE="$OPTARG"
       ;;
