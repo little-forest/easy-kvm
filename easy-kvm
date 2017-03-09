@@ -6,6 +6,11 @@
 #                       Copyright (c) 2015. Yusuke Komori, All rights reserved.
 #===============================================================================
 
+# TODO
+#  o インターネットからのインストールに途中で失敗する
+#  o raw形式のスパース/ノンスパースを選択できるようにする
+#  o インストール後 hosts ファイルにIPアドレスを追加する
+
 SCRIPT_BASE=`echo $(cd $(dirname $0); pwd)`
 SCRIPT_NAME=`basename $0`
 
@@ -18,10 +23,10 @@ SWAP_SIZE=2048
 BOOT_PARTITION_SIZE=300
 KS_OWNER=apache
 
-MIRROR_BASE=http://ftp.iij.ad.jp/pub/linux/centos/
-#MIRROR_BASE=http://ftp.jaist.ac.jp/pub/Linux/CentOS/
-#MIRROR_BASE=http://www.ftp.ne.jp/Linux/packages/CentOS/
-#MIRROR_BASE=http://ftp.riken.jp/Linux/centos/
+MIRROR_BASE=http://ftp.iij.ad.jp/pub/linux/centos
+#MIRROR_BASE=http://ftp.jaist.ac.jp/pub/Linux/CentOS
+#MIRROR_BASE=http://www.ftp.ne.jp/Linux/packages/CentOS
+#MIRROR_BASE=http://ftp.riken.jp/Linux/centos
 
 OS_LOCATION_CENTOS5=${MIRROR_BASE}/5.11/os/x86_64/
 OS_LOCATION_CENTOS6=${MIRROR_BASE}/6.8/os/x86_64
@@ -30,7 +35,6 @@ OS_LOCATION_CENTOS7=${MIRROR_BASE}/7/os/x86_64/
 ISO_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
 OS_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/os/x86_64/
 
-KS_BASE=/var/httpd/htdocs/ks
 VOL_BASE=/var/lib/libvirt/images
 POOL=default
 
@@ -257,11 +261,6 @@ _setup() { #{{{
   fi
 
   cat "$TMPFILE" >> "$KS_PATH"
-  id "$KS_OWNER" > /dev/null 2>&1
-  if [ "$?" -eq 0 ]; then
-    chown ${KS_OWNER}.${KS_OWNER} "$KS_PATH"
-  fi
-  chmod +r "$KS_PATH"
   echo -e "${C_CYAN}Kick start configuration was created as${C_OFF} $KS_PATH"
   rm $TMPFILE
 
@@ -300,14 +299,25 @@ _create() { #{{{
 
   [[ -f "$TMPFILE" ]] && rm -f "$TMPFILE"
 
+  if [[ "${KS_SRC}" = "file" ]]; then
+    KS_DIR=`mktemp -d -p /dev/shm`
+    cp ${KS_URL} ${KS_DIR}/
+    KS_URL=${KS_DIR}/`basename ${KS_URL}`
+  fi
+
   # check iso file
   if [ "${ISO_PATH}" ]; then
+    # Install from local iso file
     [[ -f "${ISO_PATH}" ]] || __error_end "File not found. : ${ISO_PATH}"
     sudo -u qemu test -r "${ISO_PATH}"
     [[ ! $? -eq 0 ]] && __error_end "qemu user can't access iso file. : ${ISO_PATH}"
     INSTALL_FROM="--location=${ISO_PATH}"
   else
+    # Install from internet
     INSTALL_FROM="--location=${OS_LOCATION}"
+    if [[ "${KS_SRC}" = "file" ]]; then
+      sed -i -re 's/^[ \t]*cdrom$//' ${KS_URL}
+    fi
   fi
 
   # check volume
@@ -372,7 +382,7 @@ _create() { #{{{
       --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
   else
     # dry run
-    echo "virt-install ${VIRT_OPT[@]}"
+    echo "virt-install ${VIRT_OPT[@]} --extra-args=\"ks=$KS_URL console=tty0 console=ttyS0,115200n8\""
   fi
 }
 #}}}
