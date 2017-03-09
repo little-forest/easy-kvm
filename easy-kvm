@@ -18,9 +18,14 @@ SWAP_SIZE=2048
 BOOT_PARTITION_SIZE=300
 KS_OWNER=apache
 
-OS_LOCATION_CENTOS5=http://ftp.iij.ad.jp/pub/linux/centos/5.11/os/x86_64/
-OS_LOCATION_CENTOS6=http://ftp.iij.ad.jp/pub/linux/centos/6.5/os/x86_64
-OS_LOCATION_CENTOS7=http://ftp.iij.ad.jp/pub/linux/centos/7/os/x86_64/
+MIRROR_BASE=http://ftp.iij.ad.jp/pub/linux/centos/
+#MIRROR_BASE=http://ftp.jaist.ac.jp/pub/Linux/CentOS/
+#MIRROR_BASE=http://www.ftp.ne.jp/Linux/packages/CentOS/
+#MIRROR_BASE=http://ftp.riken.jp/Linux/centos/
+
+OS_LOCATION_CENTOS5=${MIRROR_BASE}/5.11/os/x86_64/
+OS_LOCATION_CENTOS6=${MIRROR_BASE}/6.8/os/x86_64
+OS_LOCATION_CENTOS7=${MIRROR_BASE}/7/os/x86_64/
 
 ISO_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
 OS_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/os/x86_64/
@@ -339,45 +344,35 @@ _create() { #{{{
 
   # Create VM
   if [[ "$KS_SRC" == file ]]; then
-    INITRD_PARAM="--initrd-inject=$KS_URL"
-    KS_URL=file:/`basename "$KS_URL"`
+    INITRD_PARAM="--initrd-inject=${KS_URL}"
+    KS_URL=file:/`basename "${KS_URL}"`
   fi
 
-  VIRT_OPT=`cat << END | tr "\n" " "
---connect qemu:///system
---name $HOST_NAME
---vcpus=$NUM_CPU
---ram $MEM_SIZE
---disk pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=$DISK_SIZE
---network=network:default,model=virtio
---os-variant=$OS_VALIANT
---accelerate
---nographics
-${INITRD_PARAM}
-${INSTALL_FROM}
---extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
-END
-`
+  # create virt-install options
+  VIRT_OPT=()
+  VIRT_OPT+=(--connect qemu:///system)
+  VIRT_OPT+=(--name "${HOST_NAME}")
+  VIRT_OPT+=(--vcpus ${NUM_CPU})
+  VIRT_OPT+=(--ram ${MEM_SIZE})
+  VIRT_OPT+=(--disk "pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=${DISK_SIZE}")
+  VIRT_OPT+=(--network network:default,model=virtio)
+  VIRT_OPT+=(--os-variant ${OS_VALIANT})
+  VIRT_OPT+=(--accelerate)
+  VIRT_OPT+=(--nographics)
+  VIRT_OPT+=(${INITRD_PARAM})
+  VIRT_OPT+=(${INSTALL_FROM})
+  ## FIXME この行だけは配列で渡すとインストールが途中で失敗する(CentOS7.3)
+  #VIRT_OPT+=("--extra-args='ks=${KS_URL} console=tty0 console=ttyS0,115200n8'")
 
   # execute virt-install
   if [ ! "$WHY_RUN" ]; then
-    echo "Everything OK. Start virt-install..."
-    virt-install \
-      --connect qemu:///system \
-      --name $HOST_NAME \
-      --vcpus=$NUM_CPU \
-      --ram $MEM_SIZE \
-      --disk pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=$DISK_SIZE \
-      --network=network:default,model=virtio \
-      --os-variant=$OS_VALIANT \
-      --accelerate \
-      --nographics \
-      ${INITRD_PARAM} \
-      ${INSTALL_FROM} \
+    echo -e "Everything OK. Start virt-install...\n"
+
+    virt-install "${VIRT_OPT[@]}" \
       --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
   else
     # dry run
-    echo "virt-install $VIRT_OPT"
+    echo "virt-install ${VIRT_OPT[@]}"
   fi
 }
 #}}}
