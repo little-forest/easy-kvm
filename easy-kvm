@@ -16,7 +16,7 @@ SCRIPT_NAME=`basename $0`
 
 # defaults
 NUM_CPU=2
-MEM_SIZE=1024
+MEM_SIZE=1536
 DISK_SIZE=30
 SWAP_SIZE=2048
 
@@ -29,11 +29,14 @@ MIRROR_BASE=http://ftp.iij.ad.jp/pub/linux/centos
 #MIRROR_BASE=http://ftp.riken.jp/Linux/centos
 
 OS_LOCATION_CENTOS5=${MIRROR_BASE}/5.11/os/x86_64/
-OS_LOCATION_CENTOS6=${MIRROR_BASE}/6.8/os/x86_64
+OS_LOCATION_CENTOS6=${MIRROR_BASE}/6.8/os/x86_64/
 OS_LOCATION_CENTOS7=${MIRROR_BASE}/7/os/x86_64/
 
-ISO_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
-OS_LOCATION_CENTOS72=http://ftp.riken.jp/Linux/centos/7.2.1511/os/x86_64/
+ISO_LOCATION_CENTOS72=${MIRROR_BASE}/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
+OS_LOCATION_CENTOS72=${MIRROR_BASE}/7.2.1511/os/x86_64/
+
+ISO_LOCATION_CENTOS73=${MIRROR_BASE}/7.3.1611/isos/x86_64/CentOS-7-x86_64-DVD-1611.iso
+OS_LOCATION_CENTOS73=${MIRROR_BASE}/7.3.1611/os/x86_64/
 
 VOL_BASE=/var/lib/libvirt/images
 POOL=default
@@ -216,8 +219,6 @@ _setup() { #{{{
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
   echo -e "${C_CYAN}Name server    ${C_OFF}: $NAME_SERVER"
   echo ''
-  echo -en "${C_CYAN}Install from   ${C_OFF}: "
-  [[ "${ISO_PATH}" ]] && echo "${ISO_PATH}" || echo "${OS_LOCATION}"
 
   __confirm "Are you sure ?" || exit
 
