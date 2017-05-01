@@ -141,6 +141,9 @@ _usage() { #{{{
   echo "          -n : Name server's ip address"
   echo "          -p : OS's iso image path"
   echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、そうでなければ ks ファイル中の ISO ファイルを読み込む"
+  echo ""
+  echo "  $SCRIPT_NAME install-qemu-forward"
+  echo "    qemu-forward スクリプトをインストールします."
   exit 1
 }
 #}}}
@@ -309,6 +312,13 @@ _create() { #{{{
     KS_URL=${KS_DIR}/`basename ${KS_URL}`
   fi
 
+  # get network information
+  IP_ADDR=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --ip=([0-9\.]+).*/\1/'`
+  [[ ! ${IP_ADDR} ]] && __error_end "can't retrieve ip address from ${KS_URL}"
+  GATEWAY=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --gateway=([0-9\.]+).*/\1/'`
+  NAME_SERVER=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --nameserver=([0-9\.]+).*/\1/'`
+  NET_MASK=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --netmask=([0-9\.]+).*/\1/'`
+
   # check iso file (for offline installation)
   local PATH_OK=
   if [ "${OFFLINE}" ]; then
@@ -358,6 +368,10 @@ _create() { #{{{
   echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
   echo -e "${C_CYAN}Volume         ${C_OFF}: $VOLUME"
   echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
+  echo -e "${C_CYAN}IP Address     ${C_OFF}: $IP_ADDR"
+  echo -e "${C_CYAN}Net mask       ${C_OFF}: $NET_MASK"
+  echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
+  echo -e "${C_CYAN}Name server    ${C_OFF}: $NAME_SERVER"
   echo -ne "${C_CYAN}Install from   ${C_OFF}: "
   if [[ "${OFFLINE}" ]]; then
     echo "${ISO_PATH}"
@@ -406,6 +420,7 @@ _create() { #{{{
     if [[ $VIRT_STATUS -eq 0 ]]; then
       echo -e "${C_GREEN}Successfully installed.${C_OFF}"
       echo ''
+      echo 'If you want to define /etc/hosts , prease execute folowing command.'
       echo "echo '${IP_ADDR} ${HOST_NAME}' >> /etc/hosts"
     else
       echo -e "${C_RED}Install failed.${C_OFF}"
@@ -421,7 +436,7 @@ _create() { #{{{
 ################################################################################
 # install qemu-forward script
 ################################################################################
-_install() { #{{{
+_install-qemu-forward() { #{{{
   if [[ ! -f "${QEMU_HOOK}" ]]; then
     ln -s ${SCRIPT_BASE}/qemu-forward ${QEMU_HOOK}
     if [[ $? -eq 0 ]]; then
@@ -453,7 +468,7 @@ case "$1" in
     KS_URL="$2"
     shift 2
     ;;
-  install) CMD=install
+  install-qemu-forward) CMD=install-qemu-forwrd
     shift 1
     ;;
   *) _usage
@@ -507,7 +522,7 @@ shift `expr $OPTIND - 1`
 case "$CMD" in
   setup)  _setup ;;
   create) _create ;;
-  install) _install ;;
+  install-qemu-forward) _install-qemu-forward ;;
 esac
 
 exit 0
