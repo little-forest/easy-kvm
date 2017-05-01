@@ -44,6 +44,8 @@ POOL=default
 TPL_KS_DIR="${SCRIPT_BASE}/template/kickstart"
 TPL_PS_DIR="${SCRIPT_BASE}/template/post-script"
 
+QEMU_HOOK=/etc/libvirt/hooks/qemu2
+
 #-------------------------------------------------------------------------------
 #- common functions ------------------------------------------------------------
 
@@ -395,8 +397,19 @@ _create() { #{{{
   if [ ! "$WHY_RUN" ]; then
     echo -e "Everything OK. Start virt-install...\n"
 
+    # execute virt-install
     virt-install "${VIRT_OPT[@]}" \
       --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
+
+    # post install process
+    VIRT_STATUS=$?
+    if [[ $VIRT_STATUS -eq 0 ]]; then
+      echo -e "${C_GREEN}Successfully installed.${C_OFF}"
+      echo ''
+      echo "echo '${IP_ADDR} ${HOST_NAME}' >> /etc/hosts"
+    else
+      echo -e "${C_RED}Install failed.${C_OFF}"
+    fi
   else
     # dry run
     echo -e "${C_YELLOW}[Why run]${C_OFF}"
@@ -405,18 +418,43 @@ _create() { #{{{
 }
 #}}}
 
+################################################################################
+# install qemu-forward script
+################################################################################
+_install() { #{{{
+  if [[ ! -f "${QEMU_HOOK}" ]]; then
+    ln -s ${SCRIPT_BASE}/qemu-forward ${QEMU_HOOK}
+    if [[ $? -eq 0 ]]; then
+      echo -e "${C_GREEN}Successfully installed.${C_OFF}"
+      ls -la ${QEMU_HOOK}
+    else
+      echo -e "${C_RED}Install failed.${C_OFF} ${SCRIPT_BASE}/qemu-forward to ${QEMU_HOOK}"
+      exit 1
+    fi
+  else
+    echo -e "${C_YELLOW}${QEMU_HOOK} is already exists.${C_OFF}"
+    exit 1
+  fi
+}
+#}}}
+
 __setupcolor
 
 # check command
-[[ $# -lt 2 ]] && _usage
+[[ $# -lt 1 ]] && _usage
 case "$1" in
   setup) CMD=setup
+    [[ $# -lt 2 ]] && _usage
     KS_PATH="$2"
     shift 2
     ;;
   create) CMD=create
+    [[ $# -lt 2 ]] && _usage
     KS_URL="$2"
     shift 2
+    ;;
+  install) CMD=install
+    shift 1
     ;;
   *) _usage
     ;;
@@ -469,6 +507,7 @@ shift `expr $OPTIND - 1`
 case "$CMD" in
   setup)  _setup ;;
   create) _create ;;
+  install) _install ;;
 esac
 
 exit 0
