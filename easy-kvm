@@ -125,7 +125,7 @@ _usage() { #{{{
   echo "                     [-g GATEWAY] [-n NAME_SERVER] [-p ISO_PATH]"
   echo "    KS_CFG_PATH にKickstart用設定ファイルを出力します."
   echo ""
-  echo "  $SCRIPT_NAME create (KS_URL|KS_FILE) [-w] [-p ISO_PATH]"
+  echo "  $SCRIPT_NAME create (KS_URL|KS_FILE) [-w] [-O ISO_PATH]"
   echo "    KS_URL または KS_FILE で指定したパスの Kickstart 用設定ファイル"
   echo "    を元に仮想マシンを構成します."
   echo "          -w : Why run (show only virt-install command line)"
@@ -138,6 +138,7 @@ _usage() { #{{{
   echo "          -g : Gateway's ip address"
   echo "          -n : Name server's ip address"
   echo "          -p : OS's iso image path"
+  echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、そうでなければ ks ファイル中の ISO ファイルを読み込む"
   exit 1
 }
 #}}}
@@ -306,15 +307,27 @@ _create() { #{{{
     KS_URL=${KS_DIR}/`basename ${KS_URL}`
   fi
 
-  # check iso file
-  if [ "${ISO_PATH}" ]; then
+  # check iso file (for offline installation)
+  local PATH_OK=
+  if [ "${OFFLINE}" ]; then
     # Install from local iso file
-    [[ -f "${ISO_PATH}" ]] || __error_end "File not found. : ${ISO_PATH}"
+    if [[ "${CMD_ISO_PATH}" ]]; then
+      [[ -f "${CMD_ISO_PATH}" ]] || __error_end "File not found. : ${CMD_ISO_PATH}"
+      ISO_PATH=${CMD_ISO_PATH}
+      PATH_OK=yes
+    else
+      [[ ! "${ISO_PATH}" ]] && __error_end "ISO_PATH is not specified."
+      [[ -f "${ISO_PATH}" ]] || __error_end "File not found. : ${ISO_PATH}"
+      PATH_OK=yes
+    fi
+    [[ ! "${PATH_OK}" = 'yes' ]] && __error_end "ISO_PATH is not specified."
+
     sudo -u qemu test -r "${ISO_PATH}"
     [[ ! $? -eq 0 ]] && __error_end "qemu user can't access iso file. : ${ISO_PATH}"
     INSTALL_FROM="--location=${ISO_PATH}"
   else
     # Install from internet
+    [[ ! "${OS_LOCATION}" ]] && __error_end "OS_LOCATION is not specified."
     INSTALL_FROM="--location=${OS_LOCATION}"
     if [[ "${KS_SRC}" = "file" ]]; then
       sed -i -re 's/^[ \t]*cdrom$//' ${KS_URL}
@@ -328,14 +341,11 @@ _create() { #{{{
   [[ $? -eq 0 ]] && _error_end "Volume is already exists. : $VOLUME"
   [[ -f "$VOLUME" ]] && __error_end "Volume image file is already exists. : $VOLUME"
 
-  # check iso file
-  [[ "${ISO_PATH}" ]] && [[ ! -f "${ISO_PATH}" ]] && _error_end "ISO file is not found. : ISO_PATH"
-
   # confirm
   echo -e "${C_CYAN}$SCRIPT_NAME : $CMD${C_OFF}"
   echo -e "${C_CYAN}Hostname       ${C_OFF}: $HOST_NAME"
   echo -e "${C_CYAN}OS Valiant     ${C_OFF}: $OS_VALIANT"
-  if [ ! "$ISO_PATH" ]; then
+  if [ ! "$OFFLINE" ]; then
     echo -e "${C_CYAN}OS location    ${C_OFF}: $OS_LOCATION"
   else
     echo -e "${C_CYAN}ISO file path  ${C_OFF}: $ISO_PATH"
@@ -346,7 +356,13 @@ _create() { #{{{
   echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
   echo -e "${C_CYAN}Volume         ${C_OFF}: $VOLUME"
   echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
-  echo -e "${C_CYAN}Install from   ${C_OFF}: ${INSTALL_FROM}" | sed -re "s/(--location=|--cdrom=)//"
+  echo -ne "${C_CYAN}Install from   ${C_OFF}: "
+  if [[ "${OFFLINE}" ]]; then
+    echo "${ISO_PATH}"
+  else
+    echo "${INSTALL_FROM}" | sed -re "s/(--location=|--cdrom=)//"
+  fi
+  
   echo ''
 
   if [ ! "$WHY_RUN" ]; then
@@ -383,6 +399,7 @@ _create() { #{{{
       --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
   else
     # dry run
+    echo -e "${C_YELLOW}[Why run]${C_OFF}"
     echo "virt-install ${VIRT_OPT[@]} --extra-args=\"ks=$KS_URL console=tty0 console=ttyS0,115200n8\""
   fi
 }
@@ -406,7 +423,7 @@ case "$1" in
 esac
 
 # Get options
-while getopts :wh:o:c:m:f:d:i:g:n:p:H OPT; do
+while getopts :wh:o:c:m:f:d:i:g:n:p:OH OPT; do
   case "$OPT" in
     w) WHY_RUN=yes
       ;;
@@ -434,6 +451,16 @@ while getopts :wh:o:c:m:f:d:i:g:n:p:H OPT; do
     n) NAME_SERVER="$OPTARG"
       ;;
     p) ISO_PATH="$OPTARG"
+      ;;
+    O) OFFLINE=yes
+       OPTARR=("$@"); ARG=$(echo "${OPTARR[`expr $OPTIND - 1`]}")
+       if [[ ! "$ARG" =~ ^-.+ ]]; then
+         CMD_ISO_PATH=$(echo "${OPTARR[`expr $OPTIND - 1`]}")
+         shift 1
+       fi
+       unset OPTARR; unset ARG
+      ;;
+    t) echo "test!!"
       ;;
     \?|H) _usage
       ;;
