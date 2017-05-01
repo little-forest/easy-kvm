@@ -455,12 +455,10 @@ while getopts :wh:o:c:m:f:d:i:g:n:p:OH OPT; do
     O) OFFLINE=yes
        OPTARR=("$@"); ARG=$(echo "${OPTARR[`expr $OPTIND - 1`]}")
        if [[ ! "$ARG" =~ ^-.+ ]]; then
-         CMD_ISO_PATH=$(echo "${OPTARR[`expr $OPTIND - 1`]}")
+         CMD_ISO_PATH="$ARG"
          shift 1
        fi
        unset OPTARR; unset ARG
-      ;;
-    t) echo "test!!"
       ;;
     \?|H) _usage
       ;;
