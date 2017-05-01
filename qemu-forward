@@ -1,0 +1,257 @@
+#!/bin/bash
+#===============================================================================
+# qemu-hook7 : QEMU event hook script for CentOS7
+#
+# Date    : 2015/1/21 Start
+# Copyright: Original code by Yusuke Komori.
+#                       Copyright (c) 2015. Yusuke Komori, All rights reserved.
+#===============================================================================
+
+SCRIPT_BASE=`echo $(cd $(dirname $0); pwd)`
+SCRIPT_NAME=`basename $0`
+CONF_FILE="/etc/qemu-forward.conf"
+
+# for applying interface to firewall zone
+BR_NAME=virbr0
+BR_ZONE=internal
+
+# usage
+_usage() {
+  [ "$1" ] && showError "$1"
+  echo "usege : $SCRIPT_NAME [-(d|v)] DOMAIN_NAME (started|stopped)"
+  echo '          -d : Dry run'
+  echo '          -v : Verbose'
+  echo ''
+  echo "configuration file : $CONF_FILE"
+  echo '  each columns are as follows'
+  echo ''
+  echo '     column     :  example'
+  echo '---------------------------------------------------'
+  echo '  DomainName    : default'
+  echo '  Zone          : public'
+  echo '  Source        : 22, 22/tcp, 137/udp'
+  echo '  Destination   : 192.168.122.2, 192.168.122.2:2222'
+  echo '  DestInterface : virbr0'
+  exit 1
+}
+
+_change_interface() {
+  firewall-cmd --query-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1 || local NEED_CHANGE=true
+
+  if [ ! "$NEED_CHANGE" ]; then
+    _log "no need for changing zone of $BR_NAME"
+  fi
+
+  local RET
+  if [ ! "$DRY_RUN" ]; then
+    firewall-cmd --change-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1; RET=$?
+    if [ ! "$RET" -eq 0 ]; then
+      _error "changing zone failed."
+      return $RET
+    fi
+    _log "zone changed. $BR_NAME => $BR_ZONE"
+  else
+    _log "zone will changed. $BR_NAME => $BR_ZONE"
+  fi
+}
+
+_add_rule() {
+  local GUEST_NAME="$1"
+  local ZONE="$2"
+  local PROTO="$3"
+  local HOST_PORT="$4"
+  local GUEST_IP_ADDR="$5"
+  local GUEST_PORT="$6"
+  local OUT_IF="$7"
+
+  local RET=0
+  local DETAIL=''
+
+  # port forwarding
+  DETAIL="${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+  if [ ! "$DRY_RUN" ]; then
+    local OPT="--zone=${ZONE} --add-forward-port=port=${HOST_PORT}:proto=${PROTO}:toaddr=${GUEST_IP_ADDR}:toport=${GUEST_PORT}"
+    firewall-cmd ${OPT} > /dev/null 2>&1; RET=$?
+    if [ ! "$RET" -eq 0 ]; then
+      _error "firewall-cmd failed. $DETAIL"
+      return $RET
+    fi
+  fi
+  _log "forward-port added. $DETAIL"
+
+  # enable packets to guest
+  if [ "${PROTO}" = "tcp" ]; then
+    local OPT="-m state --state NEW -m tcp -d ${GUEST_IP_ADDR} --dport ${GUEST_PORT}"
+  elif [ ${PROTO} = "udp" ]; then
+    local OPT="-d ${GUEST_IP_ADDR} --dport ${GUEST_PORT}"
+  else
+    _error "Illegal protocol : ${PROTO}"
+    return 1
+  fi
+
+  DETAIL="interface:${OUT_IF} destination:${GUEST_IP_ADDR}:${GUEST_PORT}/${PROTO}"
+
+  # check if port is already opened
+  while read _NUM _PKTS _BYTES _TARGET _PROT _OPT _IN _OUT _SRC _DST _ACTION; do
+    [ "$DRY_RUN" ] && echo "  Checking... $_NUM $_TARGET $_PROT $_OPT $_IN $_OUT $_SRC $_DST $_ACTION"
+    if [ "$_DST" = "$GUEST_IP_ADDR" ] && [ "$_TARGET" = "ACCEPT" ] && \
+      [ "$_PROT" = "$PROTO" ] && [ "$_OUT" = "$OUT_IF" ] && \
+      [[ "$_ACTION" =~ .*${PROTO}\ dpt:${GUEST_PORT}$ ]]; then
+      _log "port is already opened, do nothing. $DETAIL"
+      return 0
+    fi
+  done < <(iptables -t filter -nvL FORWARD --line-numbers | sed -re '1,2d')
+
+  # do open
+  if [ ! "$DRY_RUN" ]; then
+    iptables -I FORWARD -o ${OUT_IF} -p ${PROTO} ${OPT} -j ACCEPT 2>/dev/null; RET=$?
+    if [ ! "$RET" -eq 0 ]; then
+      _error "opening port failed. $DETAIL"
+      return $RET
+    fi
+  fi
+  _log "port opened. $DETAIL"
+
+  return 0
+}
+
+_delete_rule() {
+  local GUEST_NAME="$1"
+  local ZONE="$2"
+  local PROTO="$3"
+  local HOST_PORT="$4"
+  local GUEST_IP_ADDR="$5"
+  local GUEST_PORT="$6"
+  local OUT_IF="$7"
+
+  local RET=0
+  local DETAIL=''
+
+  # delete port forwarding
+  DETAIL="${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+  local FWD_OPT="port=${HOST_PORT}:proto=${PROTO}:toaddr=${GUEST_IP_ADDR}:toport=${GUEST_PORT}"
+
+  firewall-cmd --zone=${ZONE} "--query-forward-port=${FWD_OPT}" > /dev/null 2>&1; RET=$?
+  if [ "$RET" -eq 0 ]; then
+    RET=0
+    if [ ! "$DRY_RUN" ]; then
+      firewall-cmd --zone=${ZONE} "--remove-forward-port=${FWD_OPT}" > /dev/null 2>&1; RET=$?
+    fi
+    if [ "$RET" -eq 0 ]; then
+      _log "forward-port removed. $DETAIL"
+    else
+      _error "removing forward-port failed. $DETAIL"
+    fi
+  else
+    _log "forward rule is not found. $DETAIL"
+  fi
+
+  # delete iptables rule
+  local DELETED=''
+  DETAIL="interface:${OUT_IF} destination:${GUEST_IP_ADDR}:${GUEST_PORT}/${PROTO}"
+  iptables -t filter -nvL FORWARD --line-numbers | sed -re '1,2d' \
+    | while read NUM PKTS BYTES TARGET PROT OPT IN OUT SRC DST ACTION; do
+    [ "$DRY_RUN" ] && echo "  Checking... $NUM $TARGET $PROT $OPT $IN $OUT $SRC $DST $ACTION"
+    if [ "$DST" = "$GUEST_IP_ADDR" ] && [ "$TARGET" = "ACCEPT" ] && \
+      [ "$PROT" = "$PROTO" ] && [ "$OUT" = "$OUT_IF" ] && \
+      [[ "$ACTION" =~ .*${PROTO}\ dpt:${GUEST_PORT}$ ]]; then
+
+      local RULE="$NUM $TARGET $PROT $OPT $IN $OUT $SRC $DEST $ACTION"
+      if [ ! "$DRY_RUN" ]; then
+        iptables -t filter -D FORWARD "$NUM"; RET=$?
+        if [ "$RET" -eq 0 ]; then
+          _log "rule deleted. $DETAIL $ACTION"  
+          DELETED=yes
+        else
+          _error "delete rule failed. $DETAIL $ACTION"
+        fi
+      else
+        _log "iptables rule will delete : $RULE"
+        DELETED=yes
+      fi
+    fi
+  done
+
+  [[ ! "$DELETED" ]] && _log "rule is not dound. : $DETAIL"
+  return 0
+}
+
+_error() {
+  local MSG="[$TARGET_GUEST_NAME : $EVENT] ERROR: $1"
+  if [ ! "$DRY_RUN" ]; then
+    logger -t "${SCRIPT_NAME}" "$MSG"
+    [ "$VERBOSE" ] && echo "$MSG" 1>&2 
+  else
+    echo "$MSG" 1>&2
+  fi
+}
+
+_log() {
+  local MSG="[$TARGET_GUEST_NAME : $EVENT] $1"
+  if [ ! "$DRY_RUN" ]; then
+    logger -t "${SCRIPT_NAME}" "$MSG"
+    [ "$VERBOSE" ] && echo "$MSG" 
+  else
+    echo "$MSG"
+  fi
+}
+
+if [ $# -eq 0 ]; then
+  _usage
+fi
+
+if [ "$1" = "-d" ]; then
+  DRY_RUN=yes
+  shift 1
+elif [ "$1" = "-v" ]; then
+  VERBOSE=yes
+  shift 1
+fi
+
+TARGET_GUEST_NAME="$1"
+EVENT="$2"
+
+# check event type
+if [[ "$EVENT" != 'started' ]] && [[ "$EVENT" != 'stopped' ]]; then
+  _log "do nothing for this event."
+  exit 0
+fi
+
+# check config file
+if [ ! -f "$CONF_FILE" ]; then
+  _error "$CONF_FILE is not found."
+  exit 1
+fi
+
+while read DOMAIN_NAME ZONE SOURCE DESTINATION DEST_IF; do
+  # skip comments and blank line
+  DOMAIN_NAME=`echo "$DOMAIN_NAME" | tr -d "\r" | tr -d "\n"`
+  if [ `echo "$DOMAIN_NAME" | egrep '^[ \t]*[#;]' | wc -l` -gt 0 ] || [ "$DOMAIN_NAME" == "" ]; then
+    continue
+  fi
+
+  # check target domain
+  [[ "$DOMAIN_NAME" != "$TARGET_GUEST_NAME" ]] && continue
+
+  SRC_PORT=`echo "$SOURCE" | cut -d '/' -f 1`
+  PROTO=`echo "$SOURCE" | cut -d '/' -f 2`
+  [[ "$PROTO" = "$SOURCE" ]] && PROTO=tcp
+
+  DEST_IP=`echo "$DESTINATION" | cut -d ':' -f 1`
+  DEST_PORT=`echo "$DESTINATION" | cut -d ':' -f 2`
+  [[ "$DEST_PORT" = "$DESTINATION" ]] && DEST_PORT="$SRC_PORT"
+
+  case "$EVENT" in
+    started)
+      _change_interface
+      _add_rule "$TARGET_GUEST_NAME" "$ZONE" "$PROTO" "$SRC_PORT" "$DEST_IP" "$DEST_PORT" "$DEST_IF"
+      ;;
+    stopped)
+      _delete_rule "$TARGET_GUEST_NAME" "$ZONE" "$PROTO" "$SRC_PORT" "$DEST_IP" "$DEST_PORT" "$DEST_IF"
+      ;;
+  esac
+done < "$CONF_FILE"
+
+exit 0
+
+# vim: ts=2 sw=2 sts=2 et nu
