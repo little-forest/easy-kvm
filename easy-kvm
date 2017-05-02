@@ -22,7 +22,8 @@ GATEWAY=192.168.122.1
 NAME_SERVER=192.168.122.1
 
 BOOT_PARTITION_SIZE=300
-KS_OWNER=apache
+
+OS_LIST=${SCRIPT_BASE}/template/os-list
 
 MIRROR_BASE=http://ftp.iij.ad.jp/pub/linux/centos
 #MIRROR_BASE=http://ftp.jaist.ac.jp/pub/Linux/CentOS
@@ -134,7 +135,7 @@ _usage() { #{{{
   echo "    を元に仮想マシンを構成します."
   echo "          -w : Why run (show only virt-install command line)"
   echo "          -h : host(kvm domain) name"
-  echo "          -o : OS (centos5 / centos6 / centos7 / centos72)"
+  echo "          -o : OS:VERSION (ex. centos:7.3)"
   echo "          -c : number of virtual cpus (default:$NUM_CPU)"
   echo "          -m : memory size (MBytes) (defaullt:$MEM_SIZE Mbytes)"
   echo "          -d : disk size (GBytes) (default:$DISK_SIZE Gbytes)"
@@ -179,24 +180,17 @@ _setup() { #{{{
   [[ ! "${HOST_NAME}" ]] && _usage "hostname is not specified."
 
   # os
-  case "$OS" in
-    centos5) OS_LOCATION="$OS_LOCATION_CENTOS5"
-             OS_VALIANT=rhel5.4
-      ;;
-    centos6) OS_LOCATION="$OS_LOCATION_CENTOS6"
-             OS_VALIANT=rhel6
-      ;;
-    centos7) OS_LOCATION="$OS_LOCATION_CENTOS7"
-             OS_VALIANT=rhel7
-      ;;
-    centos72) OS_LOCATION="$OS_LOCATION_CENTOS72"
-             OS_VALIANT=rhel7
-      ;;
-    *) _usage "$OS is not supported";
-      ;;
-  esac
+  [[ ! "${OS}" ]] && _usage "os is not specified."
+  local OS_NAME=`echo "$OS" | sed -re 's|([^:]+):.+|\1|'`
+  local OS_VERSION=`echo "$OS" | sed -re 's|[^:]+:(.*)|\1|'`
+  local OS_MAJOR_VERSION=`echo "$OS" | sed -re 's|.+:([0-9]+).*|\1|'`
+  [[ ! -f "${OS_LIST}" ]] && __error_end "os list files is not found. : ${OS_LIST}"
+  OS_DEF=`cat ${OS_LIST} | grep -Ev '^[ \t]*#' | grep -E "^[ \t]*${OS}[ ^t]+.+" | tail -n 1`
+  [[ ! "${OS_DEF}" ]] && __error_end "unsupported os : ${OS}\n  see ${OS_LIST}"
+  read OS OS_VALIANT OS_LOCATION < <(echo "${OS_DEF}")
 
   # network config
+  [[ ! "$IP" ]] && _usage "ip address is not specified."
   IP_ADDR=`echo $IP | sed -re 's|(.+)/(.+)|\1|'`
   NET_MASK=`echo $IP | sed -re 's|(.+)/(.+)|\2|'`
   [[ "$IP_ADDR" == "$NET_MASK" ]] && NET_MASK=
@@ -215,9 +209,9 @@ _setup() { #{{{
   [[ "$ISO_PATH" ]] && [[ ! -f "$ISO_PATH" ]] && __error_end "Iso file is not found. : $ISO_PATH"
 
   # temlate
-  KS_TEMPLATE="${TPL_KS_DIR}/${OS}.tpl"
+  KS_TEMPLATE="${TPL_KS_DIR}/${OS_NAME}:${OS_MAJOR_VERSION}.tpl"
   [[ ! -f "$KS_TEMPLATE" ]] && __error_end "Kick-start template file is not found. : $KS_TEMPLATE"
-  POST_SCRIPT_TEMPLATE="${TPL_PS_DIR}/post-script_${OS}.tpl"
+  POST_SCRIPT_TEMPLATE="${TPL_PS_DIR}/post-script_${OS_NAME}:${OS_MAJOR_VERSION}.tpl"
   [[ ! -f "$POST_SCRIPT_TEMPLATE" ]] && __error_end "Post-script template file is not found. : $POST_SCRIPT_TEMPLATE"
 
 
@@ -416,8 +410,13 @@ _create() { #{{{
     echo -e "Everything OK. Start virt-install...\n"
 
     # execute virt-install
+    local START_TIME=`date`
     virt-install "${VIRT_OPT[@]}" \
       --extra-args="ks=$KS_URL console=tty0 console=ttyS0,115200n8"
+    local END_TIME=`date`
+
+    echo -e "${C_CYAN}Start time: ${C_OFF}${START_TIME}"
+    echo -e "${C_CYAN}End time  : ${C_OFF}${END_TIME}"
 
     # post install process
     VIRT_STATUS=$?

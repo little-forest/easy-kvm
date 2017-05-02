@@ -1,0 +1,10 @@
+#centos:7.3 rhel7 http://ftp.nara.wide.ad.jp/pub/Linux/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 http://ftp.yz.yamagata-u.ac.jp/pub/linux/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 http://www.ftp.ne.jp/Linux/packages/CentOS/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 http://mirror.fairway.ne.jp/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 http://ftp.riken.jp/Linux/centos/7.3.1611/os/x86_64/
+centos:7.3 rhel7 http://ftp.jaist.ac.jp/pub/Linux/CentOS/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 ttp://ftp.iij.ad.jp/pub/linux/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 ttp://ftp.tsukuba.wide.ad.jp/Linux/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 ttp://download.nus.edu.sg/mirror/centos/7.3.1611/os/x86_64/
+#centos:7.3 rhel7 ttp://mirror.qoxy.com/centos/7.3.1611/os/x86_64/
