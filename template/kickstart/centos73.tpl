@@ -7,7 +7,7 @@ auth --enableshadow --passalgo=sha512
 install
 
 # Use network installation
-#url --url="%{OS_LOCATION}"
+#url --url %{OS_LOCATION}
 #cdrom
 
 # Use text mode install
@@ -23,7 +23,8 @@ keyboard --vckeymap=jp106 --xlayouts='jp'
 lang ja_JP.UTF-8
 
 # Network information
-network  --bootproto=static --device=eth0 --hostname=%{HOST_NAME} --ip=%{IP_ADDR} --gateway=%{GATEWAY} --nameserver=%{NS} --netmask=%{NET_MASK}
+#  --device=link ... specifies the first interface with its link in the up state
+network  --bootproto=static --device=link --hostname=%{HOST_NAME} --ip=%{IP_ADDR} --gateway=%{GATEWAY} --nameserver=%{NS} --netmask=%{NET_MASK}
 
 # Root password
 rootpw rootpass

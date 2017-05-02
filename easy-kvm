@@ -347,7 +347,7 @@ _create() { #{{{
     [[ ! "${OS_LOCATION}" ]] && __error_end "OS_LOCATION is not specified."
     INSTALL_FROM="--location=${OS_LOCATION}"
     sed -i -re 's/^[ \t]*cdrom$/#cdrom/' ${KS_WORK_FILE}
-    sed -i -re "s|^[# \\t]*url[ \\t]+.+$|url --url=\"${OS_LOCATION}\"|" ${KS_WORK_FILE}
+    sed -i -re "s|^[# \\t]*url[ \\t]+.+$|url --url ${OS_LOCATION}|" ${KS_WORK_FILE}
   fi
 
   # check volume
