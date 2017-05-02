@@ -7,9 +7,9 @@
 #===============================================================================
 
 # TODO
-#  o インターネットからのインストールに途中で失敗する
 #  o raw形式のスパース/ノンスパースを選択できるようにする
-#  o インストール後 hosts ファイルにIPアドレスを追加する
+#  o ミラーサイトを選択できるようにする
+#  o 取得パスの外部化
 
 SCRIPT_BASE=`echo $(cd $(dirname $0); pwd)`
 SCRIPT_NAME=`basename $0`
@@ -19,6 +19,8 @@ NUM_CPU=2
 MEM_SIZE=1536
 DISK_SIZE=30
 SWAP_SIZE=2048
+GATEWAY=192.168.1.1
+NAME_SERVER=192.168.1.1
 
 BOOT_PARTITION_SIZE=300
 KS_OWNER=apache
@@ -123,11 +125,12 @@ _usage() { #{{{
   echo "  create で config ファイルを元に仮想マシンを作成します。"
   echo ""
   echo "  $SCRIPT_NAME setup KS_CFG_PATH -w -h HOST_NAME -o OS [-c VCPUS] "
-  echo "                     [-m MEMORY_SIZE] [-d DISK_SIZE] -i IP_ADDR/NET_MASK "
-  echo "                     [-g GATEWAY] [-n NAME_SERVER] [-p ISO_PATH]"
+  echo "                     [-m MEMORY_SIZE] [-d DISK_SIZE] [-f STORAGE_FORMAT] "
+  echo "                     -i IP_ADDR/NET_MASK [-g GATEWAY] [-n NAME_SERVER] "
+  echo "                     [-p ISO_PATH]"
   echo "    KS_CFG_PATH にKickstart用設定ファイルを出力します."
   echo ""
-  echo "  $SCRIPT_NAME create (KS_URL|KS_FILE) [-w] [-O ISO_PATH]"
+  echo "  $SCRIPT_NAME create KS_CFG_PATH [-w] [-O ISO_PATH]"
   echo "    KS_URL または KS_FILE で指定したパスの Kickstart 用設定ファイル"
   echo "    を元に仮想マシンを構成します."
   echo "          -w : Why run (show only virt-install command line)"
@@ -136,9 +139,11 @@ _usage() { #{{{
   echo "          -c : number of virtual cpus (default:$NUM_CPU)"
   echo "          -m : memory size (MBytes) (defaullt:$MEM_SIZE Mbytes)"
   echo "          -d : disk size (GBytes) (default:$DISK_SIZE Gbytes)"
+  echo "          -f : storage format (raw / raw:s / qcow2 /qcow2:s) (default:raw:s)"
+  echo "                 ':s' represents using sparse file."
   echo "          -i : ip address and net mask (ex. 192.168.122.2/24)"
-  echo "          -g : Gateway's ip address"
-  echo "          -n : Name server's ip address"
+  echo "          -g : Gateway's ip address (default: 192.168.1.1)"
+  echo "          -n : Name server's ip address (192.168.1.1)"
   echo "          -p : OS's iso image path"
   echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、そうでなければ ks ファイル中の ISO ファイルを読み込む"
   echo ""
@@ -180,14 +185,11 @@ _setup() { #{{{
   NET_MASK=`echo $IP | sed -re 's|(.+)/(.+)|\2|'`
   [[ "$IP_ADDR" == "$NET_MASK" ]] && NET_MASK=
   case "$NET_MASK" in
-    32) NET_MASK=255.255.255.255
-      ;;
-    24) NET_MASK=255.255.255.0
-      ;;
-    16) NET_MASK=255.255.0.0
-      ;;
-    8) NET_MASK=255.0.0.0
-      ;;
+    32) NET_MASK=255.255.255.255 ;;
+    24) NET_MASK=255.255.255.0 ;;
+    16) NET_MASK=255.255.0.0 ;;
+    8) NET_MASK=255.0.0.0 ;;
+    *) NET_MASK=255.255.255.0 ;; # default
   esac
 
   if [[ ! "$GATEWAY" ]]; then
@@ -219,7 +221,7 @@ _setup() { #{{{
   echo -e "${C_CYAN}Ram(MB)        ${C_OFF}: $MEM_SIZE"
   echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE (${DISK_SIZE_MB} Mbytes)"
   echo -e "${C_CYAN}Swap(MB)       ${C_OFF}: $SWAP_SIZE"
-  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
+  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FORMAT (sparse=${SPARSE})"
   echo -e "${C_CYAN}IP address     ${C_OFF}: $IP_ADDR"
   echo -e "${C_CYAN}netmask        ${C_OFF}: $NET_MASK"
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
@@ -242,7 +244,7 @@ _setup() { #{{{
   echo "# param NUM_CPU=$NUM_CPU" >> "$KS_PATH"
   echo "# param MEM_SIZE=$MEM_SIZE" >> "$KS_PATH"
   echo "# param DISK_SIZE=$DISK_SIZE" >> "$KS_PATH"
-  echo "# param STORAGE_FOTMAT=$STORAGE_FOTMAT" >> "$KS_PATH"
+  echo "# param STORAGE_FORMAT=$STORAGE_FORMAT" >> "$KS_PATH"
   echo "# param OS_VALIANT=$OS_VALIANT" >> "$KS_PATH"
   echo "# param OS_LOCATION=$OS_LOCATION" >> "$KS_PATH"
   echo "# param ISO_PATH=$ISO_PATH" >> "$KS_PATH"
@@ -347,11 +349,12 @@ _create() { #{{{
   fi
 
   # check volume
-  # TODO ボリューム名が .qcow2 の場合にチェックできていない
-  VOLUME=${VOL_BASE}/${HOST_NAME}.img
-  virsh vol-list --pool=$POOL | grep "$VOLUME"
-  [[ $? -eq 0 ]] && _error_end "Volume is already exists. : $VOLUME"
-  [[ -f "$VOLUME" ]] && __error_end "Volume image file is already exists. : $VOLUME"
+  VOL_NAME=${HOST_NAME}
+  VOL_PATH=${VOL_BASE}/${VOL_NAME}.${VOL_EXT}
+  virsh vol-list --pool=$POOL | grep "$VOL_NAME"
+  [[ $? -eq 0 ]] && _error_end "Volume is already exists. : $VOL_PATH"
+  [[ -f "$VOL_PATH" ]] && __error_end "Volume image file is already exists. : $VOL_PATH"
+  VOL_NAME=${POOL}/${HOST_NAME}
 
   # confirm
   echo -e "${C_CYAN}$SCRIPT_NAME : $CMD${C_OFF}"
@@ -366,8 +369,9 @@ _create() { #{{{
   echo -e "${C_CYAN}Ram(MB)        ${C_OFF}: $MEM_SIZE"
   echo -e "${C_CYAN}Disk(GB)       ${C_OFF}: $DISK_SIZE"
   echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
-  echo -e "${C_CYAN}Volume         ${C_OFF}: $VOLUME"
-  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FOTMAT"
+  echo -e "${C_CYAN}Volume name    ${C_OFF}: $VOL_NAME"
+  echo -e "${C_CYAN}Volume path    ${C_OFF}: $VOL_PATH"
+  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FORMAT (sparse=${SPARSE}"
   echo -e "${C_CYAN}IP Address     ${C_OFF}: $IP_ADDR"
   echo -e "${C_CYAN}Net mask       ${C_OFF}: $NET_MASK"
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
@@ -397,7 +401,7 @@ _create() { #{{{
   VIRT_OPT+=(--name "${HOST_NAME}")
   VIRT_OPT+=(--vcpus ${NUM_CPU})
   VIRT_OPT+=(--ram ${MEM_SIZE})
-  VIRT_OPT+=(--disk "pool=${POOL},bus=virtio,format=${STORAGE_FOTMAT},size=${DISK_SIZE}")
+  VIRT_OPT+=(--disk "pool=${POOL},bus=virtio,format=${STORAGE_FORMAT},sparse=${SPARSE},size=${DISK_SIZE}")
   VIRT_OPT+=(--network network:default,model=virtio)
   VIRT_OPT+=(--os-variant ${OS_VALIANT})
   VIRT_OPT+=(--accelerate)
@@ -476,35 +480,27 @@ case "$1" in
 esac
 
 # Get options
-while getopts :wh:o:c:m:f:d:i:g:n:p:OH OPT; do
+while getopts wh:o:c:m:f:d:i:g:n:p:OH OPT; do
   case "$OPT" in
-    w) WHY_RUN=yes
-      ;;
-    h) HOST_NAME="$OPTARG"
-      ;;
-    o) OS="$OPTARG"
-      ;;
-    c) NUM_CPU="$OPTARG"
-      ;;
-    m) MEM_SIZE="$OPTARG"
-      ;;
-    f) STORAGE_FOTMAT="$OPTARG"
-      case "$STORAGE_FOTMAT" in
-        qcow2) ;;
-        raw) ;;
-        *) __error_end "Invalid storage format. : $STORAGE_FOTMAT" ;;
+    w) WHY_RUN=yes ;;
+    h) HOST_NAME="$OPTARG" ;;
+    o) OS="$OPTARG" ;;
+    c) NUM_CPU="$OPTARG" ;;
+    m) MEM_SIZE="$OPTARG" ;;
+    f) STORAGE_FORMAT="$OPTARG"
+      case "$STORAGE_FORMAT" in
+        qcow2) VOL_EXT=qcow2 ;;
+        qcow2:s) VOL_EXT=qcow2 ;;
+        raw) VOL_EXT=img ;;
+        raw:s) VOL_EXT=img ;;
+        *) __error_end "Invalid storage format. : $STORAGE_FORMAT" ;;
       esac
       ;;
-    d) DISK_SIZE="$OPTARG"
-      ;;
-    i) IP="$OPTARG"
-      ;;
-    g) GATEWAY="$OPTARG"
-      ;;
-    n) NAME_SERVER="$OPTARG"
-      ;;
-    p) ISO_PATH="$OPTARG"
-      ;;
+    d) DISK_SIZE="$OPTARG" ;;
+    i) IP="$OPTARG" ;;
+    g) GATEWAY="$OPTARG" ;;
+    n) NAME_SERVER="$OPTARG" ;;
+    p) ISO_PATH="$OPTARG" ;;
     O) OFFLINE=yes
        OPTARR=("$@"); ARG=$(echo "${OPTARR[`expr $OPTIND - 1`]}")
        if [[ ! "$ARG" =~ ^-.+ ]]; then
@@ -513,12 +509,25 @@ while getopts :wh:o:c:m:f:d:i:g:n:p:OH OPT; do
        fi
        unset OPTARR; unset ARG
       ;;
-    \?|H) _usage
-      ;;
+    \?|H) _usage ;;
   esac
 done
 shift `expr $OPTIND - 1`
 
+
+
+# adjust storage format
+if [[ ! $STORAGE_FORMAT ]]; then
+  # default storage format
+  STORAGE_FORMAT=raw; VOL_EXT=img; SPARSE=yes
+elif [[ $STORAGE_FORMAT =~ .+:s ]]; then
+  SPARSE=yes
+  STORAGE_FORMAT=${STORAGE_FORMAT%:s}
+else
+  SPARSE=no
+fi
+
+# execute command
 case "$CMD" in
   setup)  _setup ;;
   create) _create ;;
