@@ -1,10 +1,10 @@
 #!/bin/bash
 #===============================================================================
-# qemu-hook7 : QEMU event hook script for CentOS7
+# qemu-forward : QEMU event hook script for CentOS7
 #
 # Date    : 2015/1/21 Start
 # Copyright: Original code by Yusuke Komori.
-#                       Copyright (c) 2015. Yusuke Komori, All rights reserved.
+#                  Copyright (c) 2015-2017. Yusuke Komori, All rights reserved.
 #===============================================================================
 
 SCRIPT_BASE=`echo $(cd $(dirname $0); pwd)`
@@ -15,8 +15,56 @@ CONF_FILE="/etc/qemu-forward.conf"
 BR_NAME=virbr0
 BR_ZONE=internal
 
+#-------------------------------------------------------------------------------
+#- common functions ------------------------------------------------------------
+
+__setupcolor() { #{{{
+  # Escape sequence
+  ESC="\e["
+  ESCEND=m
+  C_OFF=${ESC}${ESCEND}
+
+  # normal
+  C_BLACK="${ESC}30${ESCEND}"
+  C_RED="${ESC}31${ESCEND}"
+  C_GREEN="${ESC}32${ESCEND}"
+  C_YELLOW="${ESC}33${ESCEND}"
+  C_BLUE="${ESC}34${ESCEND}"
+  C_MAGENTA="${ESC}35${ESCEND}"
+  C_CYAN="${ESC}36${ESCEND}"
+  C_WHITE="${ESC}37${ESCEND}"
+
+  RES_COL=60
+  MOVE_TO_COL="echo -en \\033[${RES_COL}G"
+}
+#}}}
+
+__show_ok() { #{{{
+  [ "${SILENT_MODE}" ] && return
+  [[ "$1" && "$1" -gt 0 ]] && echo -en "\\033[${1}G"
+  echo -en "[ ${C_GREEN}OK${C_OFF}"
+  [ "$2" ] && echo " ]$2" || echo " ]"
+}
+#}}}
+
+__show_info() { #{{{
+  [[ -n "${SILENT_MODE}" ]] && return
+  [[ "$1" == "-n" ]] && echo -en "${C_CYAN}${2}${C_OFF}" || echo -e "${C_CYAN}${1}${C_OFF}"
+}
+#}}}
+
+__show_error() { #{{{
+  echo -e "[${C_RED}ERROR${C_OFF}] $1"
+}
+#}}}
+
+__error_end() { #{{{
+  __show_error "$1"; exit 1
+}
+#}}}
+
 # usage
-_usage() {
+_usage() { #{{{
   [ "$1" ] && showError "$1"
   echo "usege : $SCRIPT_NAME [-(d|v)] DOMAIN_NAME (started|stopped)"
   echo '          -d : Dry run'
@@ -34,8 +82,9 @@ _usage() {
   echo '  DestInterface : virbr0'
   exit 1
 }
+#}}}
 
-_change_interface() {
+_change_interface() { #{{{
   firewall-cmd --query-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1 || local NEED_CHANGE=true
 
   if [ ! "$NEED_CHANGE" ]; then
@@ -49,13 +98,14 @@ _change_interface() {
       _error "changing zone failed."
       return $RET
     fi
-    _log "zone changed. $BR_NAME => $BR_ZONE"
+    _log "${C_GREEN}zone changed.${C_OFF} $BR_NAME => $BR_ZONE"
   else
-    _log "zone will changed. $BR_NAME => $BR_ZONE"
+    _log "${C_GREEN}zone will changed.${C_OFF} $BR_NAME => $BR_ZONE"
   fi
 }
+#}}}
 
-_add_rule() {
+_add_rule() { #{{{
   local GUEST_NAME="$1"
   local ZONE="$2"
   local PROTO="$3"
@@ -77,7 +127,7 @@ _add_rule() {
       return $RET
     fi
   fi
-  _log "forward-port added. $DETAIL"
+  _log "${C_GREEN}forward-port added.${C_OFF} $DETAIL"
 
   # enable packets to guest
   if [ "${PROTO}" = "tcp" ]; then
@@ -97,7 +147,7 @@ _add_rule() {
     if [ "$_DST" = "$GUEST_IP_ADDR" ] && [ "$_TARGET" = "ACCEPT" ] && \
       [ "$_PROT" = "$PROTO" ] && [ "$_OUT" = "$OUT_IF" ] && \
       [[ "$_ACTION" =~ .*${PROTO}\ dpt:${GUEST_PORT}$ ]]; then
-      _log "port is already opened, do nothing. $DETAIL"
+      _log "${C_BLUE}port is already opened, do nothing.${C_OFF} $DETAIL"
       return 0
     fi
   done < <(iptables -t filter -nvL FORWARD --line-numbers | sed -re '1,2d')
@@ -110,12 +160,13 @@ _add_rule() {
       return $RET
     fi
   fi
-  _log "port opened. $DETAIL"
+  _log "${C_GREEN}port opened.${C_OFF} $DETAIL"
 
   return 0
 }
+#}}}
 
-_delete_rule() {
+_delete_rule() { #{{{
   local GUEST_NAME="$1"
   local ZONE="$2"
   local PROTO="$3"
@@ -138,12 +189,12 @@ _delete_rule() {
       firewall-cmd --zone=${ZONE} "--remove-forward-port=${FWD_OPT}" > /dev/null 2>&1; RET=$?
     fi
     if [ "$RET" -eq 0 ]; then
-      _log "forward-port removed. $DETAIL"
+      _log "${C_GREEN}forward-port removed.${C_OFF} $DETAIL"
     else
       _error "removing forward-port failed. $DETAIL"
     fi
   else
-    _log "forward rule is not found. $DETAIL"
+    _log "${C_YELLOW}forward rule is not found.${C_OFF} $DETAIL"
   fi
 
   # delete iptables rule
@@ -160,42 +211,49 @@ _delete_rule() {
       if [ ! "$DRY_RUN" ]; then
         iptables -t filter -D FORWARD "$NUM"; RET=$?
         if [ "$RET" -eq 0 ]; then
-          _log "rule deleted. $DETAIL $ACTION"  
+          _log "${C_GREEN}rule deleted.${C_OFF} $DETAIL $ACTION"  
           DELETED=yes
         else
           _error "delete rule failed. $DETAIL $ACTION"
         fi
       else
-        _log "iptables rule will delete : $RULE"
+        _log "${C_GREEN}iptables rule will delete.${C_OFF} : $RULE"
         DELETED=yes
       fi
     fi
   done
 
-  [[ ! "$DELETED" ]] && _log "rule is not dound. : $DETAIL"
+  [[ ! "$DELETED" ]] && _log "${C_YELLOW}rule is not dound.${C_OFF} : $DETAIL"
   return 0
 }
+#}}}
 
-_error() {
+_error() { #{{{
   local MSG="[$TARGET_GUEST_NAME : $EVENT] ERROR: $1"
   if [ ! "$DRY_RUN" ]; then
     logger -t "${SCRIPT_NAME}" "$MSG"
-    [ "$VERBOSE" ] && echo "$MSG" 1>&2 
+    [ "$VERBOSE" ] && echo -e "${C_RED}${MSG}${C_OFF}" 1>&2 
   else
-    echo "$MSG" 1>&2
+    echo -e "${C_RED}${MSG}${C_OFF}" 1>&2
   fi
 }
+#}}}
 
-_log() {
-  local MSG="[$TARGET_GUEST_NAME : $EVENT] $1"
+_log() { #{{{
+  local MSG="${C_CYAN}[$TARGET_GUEST_NAME : $EVENT]${C_OFF} $1"
+  local RAW_MSG=`echo -e "${MSG}" | sed -r "s:\x1B\[[0-9;]*[mk]::g"`
   if [ ! "$DRY_RUN" ]; then
-    logger -t "${SCRIPT_NAME}" "$MSG"
-    [ "$VERBOSE" ] && echo "$MSG" 
+    logger -t "${SCRIPT_NAME}" "${RAW_MSG}"
+    [ "$VERBOSE" ] && echo -e "$MSG" 
   else
-    echo "$MSG"
+    echo -e "$MSG"
   fi
 }
+#}}}
 
+__setupcolor
+
+# check options {{{
 if [ $# -eq 0 ]; then
   _usage
 fi
@@ -222,7 +280,9 @@ if [ ! -f "$CONF_FILE" ]; then
   _error "$CONF_FILE is not found."
   exit 1
 fi
+#}}}
 
+# main process
 while read DOMAIN_NAME ZONE SOURCE DESTINATION DEST_IF; do
   # skip comments and blank line
   DOMAIN_NAME=`echo "$DOMAIN_NAME" | tr -d "\r" | tr -d "\n"`
@@ -254,4 +314,4 @@ done < "$CONF_FILE"
 
 exit 0
 
-# vim: ts=2 sw=2 sts=2 et nu
+# vim: ts=2 sw=2 sts=2 et nu foldmethod=marker
