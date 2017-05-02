@@ -7,7 +7,6 @@
 #===============================================================================
 
 # TODO
-#  o raw形式のスパース/ノンスパースを選択できるようにする
 #  o ミラーサイトを選択できるようにする
 #  o 取得パスの外部化
 
@@ -19,8 +18,8 @@ NUM_CPU=2
 MEM_SIZE=1536
 DISK_SIZE=30
 SWAP_SIZE=2048
-GATEWAY=192.168.1.1
-NAME_SERVER=192.168.1.1
+GATEWAY=192.168.122.1
+NAME_SERVER=192.168.122.1
 
 BOOT_PARTITION_SIZE=300
 KS_OWNER=apache
@@ -131,7 +130,7 @@ _usage() { #{{{
   echo "    KS_CFG_PATH にKickstart用設定ファイルを出力します."
   echo ""
   echo "  $SCRIPT_NAME create KS_CFG_PATH [-w] [-O ISO_PATH]"
-  echo "    KS_URL または KS_FILE で指定したパスの Kickstart 用設定ファイル"
+  echo "    KS_CFG_PATH で指定したパスの Kickstart 用設定ファイル"
   echo "    を元に仮想マシンを構成します."
   echo "          -w : Why run (show only virt-install command line)"
   echo "          -h : host(kvm domain) name"
@@ -142,8 +141,8 @@ _usage() { #{{{
   echo "          -f : storage format (raw / raw:s / qcow2 /qcow2:s) (default:raw:s)"
   echo "                 ':s' represents using sparse file."
   echo "          -i : ip address and net mask (ex. 192.168.122.2/24)"
-  echo "          -g : Gateway's ip address (default: 192.168.1.1)"
-  echo "          -n : Name server's ip address (192.168.1.1)"
+  echo "          -g : Gateway's ip address (default: $GATEWAY)"
+  echo "          -n : Name server's ip address (default: $NAME_SERVER)"
   echo "          -p : OS's iso image path"
   echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、そうでなければ ks ファイル中の ISO ファイルを読み込む"
   echo ""
@@ -153,6 +152,23 @@ _usage() { #{{{
 }
 #}}}
 
+# init storage format
+_init_storage_format() { #{{{
+  local STORAGE_FORMAT_ORG="$1"
+  [[ ! $STORAGE_FORMAT_ORG ]] && STORAGE_FORMAT_ORG=raw:s  # default storage format
+
+  case "$STORAGE_FORMAT_ORG" in
+    qcow2|qcow2:s) STORAGE_FORMAT=qcow2; VOL_EXT=qcow2 ;;
+    raw|raw:s) STORAGE_FORMAT=raw; VOL_EXT=img ;;
+    *) __error_end "Invalid storage format. : $STORAGE_FORMAT_ORG" ;;
+  esac
+
+  case "$STORAGE_FORMAT_ORG" in
+    qcow2:s|raw:s) SPARSE=yes ;;
+    *) SPARSE=no ;;
+  esac
+}
+#}}}
 
 ################################################################################
 # setup mode
@@ -191,12 +207,6 @@ _setup() { #{{{
     8) NET_MASK=255.0.0.0 ;;
     *) NET_MASK=255.255.255.0 ;; # default
   esac
-
-  if [[ ! "$GATEWAY" ]]; then
-    GATEWAY=`echo $IP_ADDR | sed -re 's/([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.[0-9]{1,3}/\1.1/'`
-  fi
-
-  [[ ! "$NAME_SERVER" ]] && NAME_SERVER="$GATEWAY"
 
   # disk
   DISK_SIZE_MB=`expr "${DISK_SIZE}" '*' 1024`
@@ -244,7 +254,7 @@ _setup() { #{{{
   echo "# param NUM_CPU=$NUM_CPU" >> "$KS_PATH"
   echo "# param MEM_SIZE=$MEM_SIZE" >> "$KS_PATH"
   echo "# param DISK_SIZE=$DISK_SIZE" >> "$KS_PATH"
-  echo "# param STORAGE_FORMAT=$STORAGE_FORMAT" >> "$KS_PATH"
+  echo "# param STORAGE_FORMAT=$STORAGE_FORMAT_ORG" >> "$KS_PATH"
   echo "# param OS_VALIANT=$OS_VALIANT" >> "$KS_PATH"
   echo "# param OS_LOCATION=$OS_LOCATION" >> "$KS_PATH"
   echo "# param ISO_PATH=$ISO_PATH" >> "$KS_PATH"
@@ -281,45 +291,35 @@ _setup() { #{{{
 # create mode
 ################################################################################
 _create() { #{{{
-  [[ "${KS_URL}" =~ ^https?://.+ ]] && KS_SRC=http || KS_SRC=file
 
-  # check KS_URL
-  TMPFILE=`mktemp -p /dev/shm`
-  if [[ ${KS_SRC} == http ]]; then
-    echo -en "${C_GREEN}Checking kick start url... ${C_OFF}"
-    wget -O "$TMPFILE" "$KS_URL" > /dev/null 2>&1; RET=$?
-    if [[ "$RET" -gt 0 ]] || [[ "`ls -la $TMPFILE | awk '{print $5}'`" -eq 0 ]]; then
-      echo ''
-      __show_error "$KS_URL is not found."
-      [[ -f "$TMPFILE" ]] && rm -f "$TMPFILE"
-      exit 1
-    fi
-    echo -e " [ ${C_GREEN}OK${C_OFF} ]"
-  elif [ ${KS_SRC} == file ]; then
-    echo -en "${C_GREEN}Checking kick start file... ${C_OFF}"
-    [[ ! -f "$KS_URL" ]] && __error_end "Kick start file is not exists. : $KS_URL"
-    cp "$KS_URL" "$TMPFILE"
-  fi
+  # check KS_CFG_PATH
+  KS_WORK_FILE=`mktemp -p /dev/shm`
+  echo -en "${C_GREEN}Checking kick start file... ${C_OFF} : $KS_CFG_PATH"
+  [[ ! -f "$KS_CFG_PATH" ]] && ( echo ''; __error_end "Kick start file is not exists. : $KS_CFG_PATH"; )
+  cp "$KS_CFG_PATH" "$KS_WORK_FILE"
+  echo -e " [ ${C_GREEN}OK${C_OFF} ]"
+  echo ''
 
   # load paramters
   echo -en "${C_GREEN}Loading parameters... ${C_OFF}"
-  eval `cat "$TMPFILE" | egrep "^# param" | sed -re 's/^# param //'`
+  eval `cat "$KS_WORK_FILE" | egrep "^# param" | sed -re 's/^# param //'`
   echo -e " [ ${C_GREEN}OK${C_OFF} ]"
 
-  [[ -f "$TMPFILE" ]] && rm -f "$TMPFILE"
+  [[ -f "$KS_WORK_FILE" ]] && rm "$KS_WORK_FILE"
 
-  if [[ "${KS_SRC}" = "file" ]]; then
-    KS_DIR=`mktemp -d -p /dev/shm`
-    cp ${KS_URL} ${KS_DIR}/
-    KS_URL=${KS_DIR}/`basename ${KS_URL}`
-  fi
+  KS_DIR=`mktemp -d -p /dev/shm`
+  cp ${KS_CFG_PATH} ${KS_DIR}/
+  KS_WORK_FILE=${KS_DIR}/`basename ${KS_CFG_PATH}`
+
+  STORAGE_FORMAT_ORG="$STORAGE_FORMAT"; unset STORAGE_FORMAT
+  _init_storage_format "$STORAGE_FORMAT_ORG"
 
   # get network information
-  IP_ADDR=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --ip=([0-9\.]+).*/\1/'`
-  [[ ! ${IP_ADDR} ]] && __error_end "can't retrieve ip address from ${KS_URL}"
-  GATEWAY=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --gateway=([0-9\.]+).*/\1/'`
-  NAME_SERVER=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --nameserver=([0-9\.]+).*/\1/'`
-  NET_MASK=`cat "$KS_URL" | grep '^network ' | sed -re 's/.+ --netmask=([0-9\.]+).*/\1/'`
+  IP_ADDR=`cat "$KS_WORK_FILE" | grep '^network ' | sed -re 's/.+ --ip=([0-9\.]+).*/\1/'`
+  [[ ! ${IP_ADDR} ]] && __error_end "can't retrieve ip address from ${KS_WORK_FILE}"
+  GATEWAY=`cat "$KS_WORK_FILE" | grep '^network ' | sed -re 's/.+ --gateway=([0-9\.]+).*/\1/'`
+  NAME_SERVER=`cat "$KS_WORK_FILE" | grep '^network ' | sed -re 's/.+ --nameserver=([0-9\.]+).*/\1/'`
+  NET_MASK=`cat "$KS_WORK_FILE" | grep '^network ' | sed -re 's/.+ --netmask=([0-9\.]+).*/\1/'`
 
   # check iso file (for offline installation)
   local PATH_OK=
@@ -339,13 +339,15 @@ _create() { #{{{
     sudo -u qemu test -r "${ISO_PATH}"
     [[ ! $? -eq 0 ]] && __error_end "qemu user can't access iso file. : ${ISO_PATH}"
     INSTALL_FROM="--location=${ISO_PATH}"
+
+    sed -i -re 's/^[# \t]*cdrom$/cdrom/' ${KS_WORK_FILE}
+    sed -i -re 's/^[ \t]*(url[ \t]+.+)$/#\1/' ${KS_WORK_FILE}
   else
     # Install from internet
     [[ ! "${OS_LOCATION}" ]] && __error_end "OS_LOCATION is not specified."
     INSTALL_FROM="--location=${OS_LOCATION}"
-    if [[ "${KS_SRC}" = "file" ]]; then
-      sed -i -re 's/^[ \t]*cdrom$//' ${KS_URL}
-    fi
+    sed -i -re 's/^[ \t]*cdrom$/#cdrom/' ${KS_WORK_FILE}
+    sed -i -re 's/^[# \t]*(url[ \t]+.+)$/\1/' ${KS_WORK_FILE}
   fi
 
   # check volume
@@ -371,7 +373,7 @@ _create() { #{{{
   echo -e "${C_CYAN}Pool           ${C_OFF}: $POOL"
   echo -e "${C_CYAN}Volume name    ${C_OFF}: $VOL_NAME"
   echo -e "${C_CYAN}Volume path    ${C_OFF}: $VOL_PATH"
-  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FORMAT (sparse=${SPARSE}"
+  echo -e "${C_CYAN}Storage format ${C_OFF}: $STORAGE_FORMAT (sparse=${SPARSE})"
   echo -e "${C_CYAN}IP Address     ${C_OFF}: $IP_ADDR"
   echo -e "${C_CYAN}Net mask       ${C_OFF}: $NET_MASK"
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
@@ -390,10 +392,8 @@ _create() { #{{{
   fi
 
   # Create VM
-  if [[ "$KS_SRC" == file ]]; then
-    INITRD_PARAM="--initrd-inject=${KS_URL}"
-    KS_URL=file:/`basename "${KS_URL}"`
-  fi
+  INITRD_PARAM="--initrd-inject=${KS_WORK_FILE}"
+  KS_URL=file:/`basename "${KS_WORK_FILE}"`
 
   # create virt-install options
   VIRT_OPT=()
@@ -431,6 +431,9 @@ _create() { #{{{
     fi
   else
     # dry run
+    echo -e "${C_YELLOW}[${KS_WORK_FILE} from ${KS_CFG_PATH}]${C_OFF}"
+    cat "${KS_WORK_FILE}"
+    echo ''
     echo -e "${C_YELLOW}[Why run]${C_OFF}"
     echo "virt-install ${VIRT_OPT[@]} --extra-args=\"ks=$KS_URL console=tty0 console=ttyS0,115200n8\""
   fi
@@ -469,7 +472,7 @@ case "$1" in
     ;;
   create) CMD=create
     [[ $# -lt 2 ]] && _usage
-    KS_URL="$2"
+    KS_CFG_PATH="$2"
     shift 2
     ;;
   install-qemu-forward) CMD=install-qemu-forwrd
@@ -487,15 +490,7 @@ while getopts wh:o:c:m:f:d:i:g:n:p:OH OPT; do
     o) OS="$OPTARG" ;;
     c) NUM_CPU="$OPTARG" ;;
     m) MEM_SIZE="$OPTARG" ;;
-    f) STORAGE_FORMAT="$OPTARG"
-      case "$STORAGE_FORMAT" in
-        qcow2) VOL_EXT=qcow2 ;;
-        qcow2:s) VOL_EXT=qcow2 ;;
-        raw) VOL_EXT=img ;;
-        raw:s) VOL_EXT=img ;;
-        *) __error_end "Invalid storage format. : $STORAGE_FORMAT" ;;
-      esac
-      ;;
+    f) STORAGE_FORMAT_ORG="$OPTARG" ;;
     d) DISK_SIZE="$OPTARG" ;;
     i) IP="$OPTARG" ;;
     g) GATEWAY="$OPTARG" ;;
@@ -514,18 +509,8 @@ while getopts wh:o:c:m:f:d:i:g:n:p:OH OPT; do
 done
 shift `expr $OPTIND - 1`
 
-
-
 # adjust storage format
-if [[ ! $STORAGE_FORMAT ]]; then
-  # default storage format
-  STORAGE_FORMAT=raw; VOL_EXT=img; SPARSE=yes
-elif [[ $STORAGE_FORMAT =~ .+:s ]]; then
-  SPARSE=yes
-  STORAGE_FORMAT=${STORAGE_FORMAT%:s}
-else
-  SPARSE=no
-fi
+_init_storage_format $STORAGE_FORMAT_ORG
 
 # execute command
 case "$CMD" in
