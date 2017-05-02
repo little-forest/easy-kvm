@@ -454,6 +454,7 @@ _install-qemu-forward() { #{{{
     fi
   else
     echo -e "${C_YELLOW}${QEMU_HOOK} is already exists.${C_OFF}"
+    ls -la ${QEMU_HOOK}
     exit 1
   fi
 }
@@ -464,17 +465,17 @@ __setupcolor
 # check command
 [[ $# -lt 1 ]] && _usage
 case "$1" in
-  setup) CMD=setup
+  setup) CMD=$1
     [[ $# -lt 2 ]] && _usage
     KS_PATH="$2"
     shift 2
     ;;
-  create) CMD=create
+  create) CMD=$1
     [[ $# -lt 2 ]] && _usage
     KS_CFG_PATH="$2"
     shift 2
     ;;
-  install-qemu-forward) CMD=install-qemu-forwrd
+  install-qemu-forward) CMD=$1
     shift 1
     ;;
   *) _usage
