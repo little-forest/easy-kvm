@@ -45,7 +45,7 @@ POOL=default
 TPL_KS_DIR="${SCRIPT_BASE}/template/kickstart"
 TPL_PS_DIR="${SCRIPT_BASE}/template/post-script"
 
-QEMU_HOOK=/etc/libvirt/hooks/qemu2
+QEMU_HOOK=/etc/libvirt/hooks/qemu
 
 #-------------------------------------------------------------------------------
 #- common functions ------------------------------------------------------------
