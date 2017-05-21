@@ -444,6 +444,12 @@ _create() { #{{{
 ################################################################################
 _install-qemu-forward() { #{{{
   if [[ ! -f "${QEMU_HOOK}" ]]; then
+    local QEMU_DIR=`dirname ${QEMU_HOOK}`
+    if [[ ! -d "${QEMU_DIR}" ]]; then
+      mkdir -p "${QEMU_DIR}"
+      chmod 755 "${QEMU_DIR}"
+    fi
+
     ln -s ${SCRIPT_BASE}/qemu-forward ${QEMU_HOOK}
     if [[ $? -eq 0 ]]; then
       echo -e "${C_GREEN}Successfully installed.${C_OFF}"
