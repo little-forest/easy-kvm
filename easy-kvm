@@ -153,6 +153,20 @@ _usage() { #{{{
 }
 #}}}
 
+# check if libvirtd is installed
+_check_libvirtd() { #{{{
+  local ERR=
+  which virsh > /dev/null 2>&1 || ERR=yes
+  which virt-install > /dev/null 2>&1 || ERR=yes
+  if [[ $ERR ]]; then
+    __error_end "Virtualization group is not installed. \
+Please execute following command as the root user.\n\
+  LANG=C yum groupinstall Virtualization 'Virtualization Client' 'Virtualization Platform' 'Virtualization Tools'"
+  fi
+}
+#}}}
+
+
 # init storage format
 _init_storage_format() { #{{{
   local STORAGE_FORMAT_ORG="$1"
@@ -285,6 +299,7 @@ _setup() { #{{{
 # create mode
 ################################################################################
 _create() { #{{{
+  _check_libvirtd
 
   # check KS_CFG_PATH
   KS_WORK_FILE=`mktemp -p /dev/shm`
