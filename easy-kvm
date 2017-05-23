@@ -301,6 +301,8 @@ _setup() { #{{{
 _create() { #{{{
   _check_libvirtd
 
+  [[ ! $UID -eq 0 ]] && __error_end 'Please perform this operation as the root user.'
+
   # check KS_CFG_PATH
   KS_WORK_FILE=`mktemp -p /dev/shm`
   echo -en "${C_GREEN}Checking kick start file... ${C_OFF} : $KS_CFG_PATH"
