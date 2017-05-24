@@ -384,6 +384,8 @@ FIREWALL_CMD=`which firewall-cmd 2> /dev/null`
 IPTABLES=`which iptables 2> /dev/null`
 [[ ! "$IPTABLES" ]] && __error_end 'iptables is not available.'
 
+[[ ${FIREWALL_CMD} && ${EVENT} = started ]] && _change_interface
+
 while read DOMAIN_NAME ZONE SOURCE DESTINATION DEST_IF; do
   # skip comments and blank line
   DOMAIN_NAME=`echo "$DOMAIN_NAME" | tr -d "\r" | tr -d "\n"`
@@ -404,7 +406,7 @@ while read DOMAIN_NAME ZONE SOURCE DESTINATION DEST_IF; do
 
   case "$EVENT" in
     started)
-      _change_interface
+      #_change_interface
       _add_rule "$TARGET_GUEST_NAME" "$ZONE" "$PROTO" "$SRC_PORT" "$DEST_IP" "$DEST_PORT" "$DEST_IF"
       ;;
     stopped)
