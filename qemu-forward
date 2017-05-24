@@ -85,22 +85,23 @@ _usage() { #{{{
 #}}}
 
 _change_interface() { #{{{
-  firewall-cmd --query-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1 || local NEED_CHANGE=true
+  ${FIREWALL_CMD} --query-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1 || local NEED_CHANGE=true
 
   if [ ! "$NEED_CHANGE" ]; then
     _log "no need for changing zone of $BR_NAME"
+    return
   fi
 
   local RET
   if [ ! "$DRY_RUN" ]; then
-    firewall-cmd --change-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1; RET=$?
+    ${FIREWALL_CMD} --change-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1; RET=$?
     if [ ! "$RET" -eq 0 ]; then
       _error "changing zone failed."
       return $RET
     fi
-    _log "${C_GREEN}zone changed.${C_OFF} $BR_NAME => $BR_ZONE"
+    _log "${C_GREEN}zone changed.${C_OFF} interface:$BR_NAME => zone:$BR_ZONE"
   else
-    _log "${C_GREEN}zone will changed.${C_OFF} $BR_NAME => $BR_ZONE"
+    _log "${C_GREEN}zone will changed.${C_OFF} interface:$BR_NAME => zone:$BR_ZONE"
   fi
 }
 #}}}
@@ -112,16 +113,24 @@ _add_rule_firewall_cmd() { #{{{
   local GUEST_IP_ADDR="$4"
   local GUEST_PORT="$5"
 
-  local DETAIL="${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+  local DETAIL="zone:${ZONE} ${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+
+  local FWDOPT="port=${HOST_PORT}:proto=${PROTO}:toaddr=${GUEST_IP_ADDR}:toport=${GUEST_PORT}"
+  ${FIREWALL_CMD} --zone=${ZONE} --query-forward-port="${FWDOPT}" > /dev/null 2>&1 || local NEEDS_CHANGE=yes
+  if [[ ! "${NEEDS_CHANGE}" ]]; then
+    _log "no need for forwarding port : ${DETAIL}"
+    return 0
+  fi
+
   if [ ! "$DRY_RUN" ]; then
-    local OPT="--zone=${ZONE} --add-forward-port=port=${HOST_PORT}:proto=${PROTO}:toaddr=${GUEST_IP_ADDR}:toport=${GUEST_PORT}"
+    local OPT="--zone=${ZONE} --add-forward-port=${FWDOPT}"
     ${FIREWALL_CMD} ${OPT} > /dev/null 2>&1; local RET=$?
     if [ ! "$RET" -eq 0 ]; then
-      _error "firewall-cmd failed. (${FIREWALL_CMD} ${OPT})"
+      _error "firewall-cmd failed. (${FIREWALL_CMD} ${OPT} retcode:$RET)"
       return $RET
     fi
   fi
-  _log "${C_GREEN}forward-port added.${C_OFF} $DETAIL"
+  _log "${C_GREEN}forward-port added.${C_OFF} ${DETAIL}"
 }
 #}}}
 
@@ -158,15 +167,50 @@ _add_rule() { #{{{
   local HOST_PORT="$4"
   local GUEST_IP_ADDR="$5"
   local GUEST_PORT="$6"
-  WARD --line-numbers
-  if [ ! "$DRY_RUN" ]; then
-    ${IPTABLES} -I FORWARD -o ${OUT_IF} -p ${PROTO} ${OPT} -j ACCEPT 2>/dev/null; RET=$?
-    if [ ! "$RET" -eq 0 ]; then
-      _error "opening port failed. $DETAIL"
-      return $RET
-    fi
+
+  # add port forwarding
+  if [[ "${FIREWALL_CMD}" ]]; then
+    _add_rule_firewall_cmd ${ZONE} ${PROTO} ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
+    local RET=$?
+    [[ ! $RET -eq 0 ]] && return $RET
+  else
+    _add_rule_iptables ${PROTO} eth0 ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
+    local RET=$?
+    [[ ! $RET -eq 0 ]] && return $RET
   fi
-  _log "${C_GREEN}port opened.${C_OFF} $DETAIL"
+
+  ## enable packets to guest
+  #if [ "${PROTO}" = "tcp" ]; then
+  #  local OPT="-m state --state NEW -m tcp -d ${GUEST_IP_ADDR} --dport ${GUEST_PORT}"
+  #elif [ ${PROTO} = "udp" ]; then
+  #  local OPT="-d ${GUEST_IP_ADDR} --dport ${GUEST_PORT}"
+  #else
+  #  _error "Illegal protocol : ${PROTO}"
+  #  return 1
+  #fi
+
+  #DETAIL="interface:${OUT_IF} destination:${GUEST_IP_ADDR}:${GUEST_PORT}/${PROTO}"
+
+  ## check if port is already opened
+  #while read _NUM _PKTS _BYTES _TARGET _PROT _OPT _IN _OUT _SRC _DST _ACTION; do
+  #  [ "$DRY_RUN" ] && echo "  Checking... $_NUM $_TARGET $_PROT $_OPT $_IN $_OUT $_SRC $_DST $_ACTION"
+  #  if [ "$_DST" = "$GUEST_IP_ADDR" ] && [ "$_TARGET" = "ACCEPT" ] && \
+  #    [ "$_PROT" = "$PROTO" ] && [ "$_OUT" = "$OUT_IF" ] && \
+  #    [[ "$_ACTION" =~ .*${PROTO}\ dpt:${GUEST_PORT}$ ]]; then
+  #    _log "${C_BLUE}port is already opened, do nothing.${C_OFF} $DETAIL"
+  #    return 0
+  #  fi
+  #done < <(iptables -t filter -nvL FORWARD --line-numbers | sed -re '1,2d')
+
+  ## do open
+  #if [ ! "$DRY_RUN" ]; then
+  #  iptables -I FORWARD -o ${OUT_IF} -p ${PROTO} ${OPT} -j ACCEPT 2>/dev/null; RET=$?
+  #  if [ ! "$RET" -eq 0 ]; then
+  #    _error "opening port failed. $DETAIL"
+  #    return $RET
+  #  fi
+  #fi
+  #_log "${C_GREEN}port opened.${C_OFF} $DETAIL"
 
   return 0
 }
