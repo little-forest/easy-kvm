@@ -84,6 +84,12 @@ _usage() { #{{{
 }
 #}}}
 
+_get_ip_addr() { #{{{
+  local IF="$1"
+  ifconfig "${IF}" | grep 'inet addr:' | sed -re 's/.+inet addr:([0-9.]+) .+/\1/'
+}
+#}}}
+
 _change_interface() { #{{{
   ${FIREWALL_CMD} --query-interface="$BR_NAME" --zone="$BR_ZONE" > /dev/null 2>&1 || local NEED_CHANGE=true
 
@@ -141,18 +147,27 @@ _add_rule_iptables() { #{{{
   local GUEST_IP_ADDR="$4"
   local GUEST_PORT="$5"
 
-  local DETAIL="${LOCAL_IF}::${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+  local HOST_IP_ADDR=`_get_ip_addr ${LOCAL_IF}`
+  if [[ ! ${HOST_IP_ADDR} ]]; then
+    _error "Can't get ip address for ${IF}"
+    return 1
+  fi
+
+  local DETAIL="${LOCAL_IF}::${HOST_IP_ADDR}:${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
   if [ ! "$DRY_RUN" ]; then
-    local OPT="-i ${LOCAL_IF} -p ${PROTO} --dport ${HOST_PORT} -j DNAT --to-destination ${GUEST_IP_ADDR}:${GUEST_PORT}"
-    ${IPTABLES} -t nat -A PREROUTING ${OPT} > /dev/null 2>&1; local RET=$?
+    local OPT="-p ${PROTO} --dport ${HOST_PORT} -j DNAT --to-destination ${GUEST_IP_ADDR}:${GUEST_PORT}"
+    local OPT_P="-t nat -A PREROUTING -i ${LOCAL_IF} ${OPT}"
+    local OPT_O="-t nat -A OUTPUT -d ${HOST_IP_ADDR} ${OPT}"
+
+    ${IPTABLES} ${OPT_P} > /dev/null 2>&1; local RET=$?
     if [ ! "$RET" -eq 0 ]; then
-      _error "iptables failed. (${IPTABLES} -t nat -A PREROUTING ${OPT})"
+      _error "iptables failed. (${IPTABLES} ${OPT_P})"
       return $RET
     fi
 
-    ${IPTABLES} -t nat -A OUTPUT ${OPT} > /dev/null 2>&1; local RET=$?
+    ${IPTABLES} ${OPT_O} > /dev/null 2>&1; local RET=$?
     if [ ! "$RET" -eq 0 ]; then
-      _error "iptables failed. (${IPTABLES} -t nat -A OUT ${OPT})"
+      _error "iptables failed. (${IPTABLES} ${OPT_O})"
       return $RET
     fi
   fi
@@ -167,7 +182,8 @@ _add_rule() { #{{{
   local HOST_PORT="$4"
   local GUEST_IP_ADDR="$5"
   local GUEST_PORT="$6"
-  local ZONE="$7"
+  local ZONE="$7"       # for firewall-cmd
+  local LOCAL_IF="$7"   # for iptables
 
   # add port forwarding
   if [[ "${FIREWALL_CMD}" ]]; then
@@ -175,7 +191,7 @@ _add_rule() { #{{{
     local RET=$?
     [[ ! $RET -eq 0 ]] && return $RET
   else
-    _add_rule_iptables ${PROTO} eth0 ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
+    _add_rule_iptables ${PROTO} ${LOCAL_IF} ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
     local RET=$?
     [[ ! $RET -eq 0 ]] && return $RET
   fi
@@ -254,18 +270,27 @@ _delete_rule_iptables() { #{{{
   local GUEST_IP_ADDR="$4"
   local GUEST_PORT="$5"
 
-  local DETAIL="${LOCAL_IF}::${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
+  local HOST_IP_ADDR=`_get_ip_addr ${LOCAL_IF}`
+  if [[ ! ${HOST_IP_ADDR} ]]; then
+    _error "Can't get ip address for ${IF}"
+    return 1
+  fi
+
+  local DETAIL="${LOCAL_IF}::${HOST_IP_ADDR}:${HOST_PORT}/${PROTO} ==> ${GUEST_IP_ADDR}:${GUEST_PORT}" 
   if [ ! "$DRY_RUN" ]; then
-    local OPT="-i ${LOCAL_IF} -p ${PROTO} --dport ${HOST_PORT} -j DNAT --to-destination ${GUEST_IP_ADDR}:${GUEST_PORT}"
-    ${IPTABLES} -t nat -D PREROUTING ${OPT} > /dev/null 2>&1; local RET=$?
+    local OPT="-p ${PROTO} --dport ${HOST_PORT} -j DNAT --to-destination ${GUEST_IP_ADDR}:${GUEST_PORT}"
+    local OPT_P="-t nat -D PREROUTING -i ${LOCAL_IF} ${OPT}"
+    local OPT_O="-t nat -D OUTPUT -d ${HOST_IP_ADDR} ${OPT}"
+
+    ${IPTABLES} ${OPT_P} > /dev/null 2>&1; local RET=$?
     if [ ! "$RET" -eq 0 ]; then
-      _error "iptables failed. (${IPTABLES} -t nat -D PREROUTING ${OPT})"
+      _error "iptables failed. (${IPTABLES} ${OPT_P})"
       return $RET
     fi
 
-    ${IPTABLES} -t nat -D OUTPUT ${OPT} > /dev/null 2>&1; local RET=$?
+    ${IPTABLES} ${OPT_O} > /dev/null 2>&1; local RET=$?
     if [ ! "$RET" -eq 0 ]; then
-      _error "iptables failed. (${IPTABLES} -t nat -D OUT ${OPT})"
+      _error "iptables failed. (${IPTABLES} ${OPT_O})"
       return $RET
     fi
   fi
@@ -280,7 +305,8 @@ _delete_rule() { #{{{
   local HOST_PORT="$4"
   local GUEST_IP_ADDR="$5"
   local GUEST_PORT="$6"
-  local ZONE="$7"
+  local ZONE="$7"       # for firewall-cmd
+  local LOCAL_IF="$7"   # for iptables
 
   local RET=0
   local DETAIL=''
@@ -290,10 +316,10 @@ _delete_rule() { #{{{
     _delete_rule_firewall_cmd ${ZONE} ${PROTO} ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
     local RET=$?
     [[ ! $RET -eq 0 ]] && return $RET
-  #else
-  #  _add_rule_iptables ${PROTO} eth0 ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
-  #  local RET=$?
-  #  [[ ! $RET -eq 0 ]] && return $RET
+  else
+    _delete_rule_iptables ${PROTO} ${LOCAL_IF} ${HOST_PORT} ${GUEST_IP_ADDR} ${GUEST_PORT}
+    local RET=$?
+    [[ ! $RET -eq 0 ]] && return $RET
   fi
 
   # delete iptables rule
@@ -322,32 +348,6 @@ _delete_rule() { #{{{
       fi
     fi
   done < <(${IPTABLES} -t filter -nvL FORWARD --line-numbers | sed -re '1,2d')
-
-  # delete iptables rule
-  #local DELETED=''
-  #DETAIL="interface:${OUT_IF} destination:${GUEST_IP_ADDR}:${GUEST_PORT}/${PROTO}"
-  #${IPTABLES} -t filter -nvL FORWARD --line-numbers | sed -re '1,2d' \
-  #  | while read NUM PKTS BYTES TARGET PROT OPT IN OUT SRC DST ACTION; do
-  #  [[ "$DRY_RUN" ]] && echo "  Checking... $NUM $TARGET $PROT $OPT $IN $OUT $SRC $DST $ACTION"
-  #  if [[ "$DST" = "$GUEST_IP_ADDR" ]] && [[ "$TARGET" = "ACCEPT" ]] && \
-  #    [[ "$PROT" = "$PROTO" ]] && [[ "$OUT" = "$OUT_IF" ]] && \
-  #    [[ "$ACTION" =~ .*${PROTO}\ dpt:${GUEST_PORT}$ ]]; then
-
-  #    local RULE="$NUM $TARGET $PROT $OPT $IN $OUT $SRC $DEST $ACTION"
-  #    if [[ ! "$DRY_RUN" ]]; then
-  #      ${IPTABLES} -t filter -D FORWARD "$NUM"; RET=$?
-  #      if [[ "$RET" -eq 0 ]]; then
-  #        _log "${C_GREEN}rule deleted.${C_OFF} $DETAIL $ACTION"  
-  #        DELETED=yes
-  #      else
-  #        _error "delete rule failed. $DETAIL $ACTION"
-  #      fi
-  #    else
-  #      _log "${C_GREEN}iptables rule will delete.${C_OFF} : $RULE"
-  #      DELETED=yes
-  #    fi
-  #  fi
-  #done
 
   [[ ! "$DELETED" ]] && _log "${C_YELLOW}rule is not dound.${C_OFF} : $DETAIL"
   return 0
@@ -437,7 +437,6 @@ while read DOMAIN_NAME ZONE SOURCE DESTINATION DEST_IF; do
 
   case "$EVENT" in
     started)
-      #_change_interface
       _add_rule "$TARGET_GUEST_NAME" "$DEST_IF" "$PROTO" "$SRC_PORT" "$DEST_IP" "$DEST_PORT" "$ZONE"
       ;;
     stopped)
