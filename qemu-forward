@@ -66,9 +66,10 @@ __error_end() { #{{{
 # usage
 _usage() { #{{{
   [ "$1" ] && showError "$1"
-  echo "usege : $SCRIPT_NAME [-(d|v)] DOMAIN_NAME (started|stopped)"
+  echo "usege : $SCRIPT_NAME [-(d|v|c)] DOMAIN_NAME (started|stopped)"
   echo '          -d : Dry run'
   echo '          -v : Verbose'
+  echo '          -c : create configuration file'
   echo ''
   echo "configuration file : $CONF_FILE"
   echo '  each columns are as follows'
@@ -76,7 +77,7 @@ _usage() { #{{{
   echo '     column     :  example'
   echo '---------------------------------------------------'
   echo '  DomainName    : default'
-  echo '  Zone          : public'
+  echo '  Zone/IF       : public'
   echo '  Source        : 22, 22/tcp, 137/udp'
   echo '  Destination   : 192.168.122.2, 192.168.122.2:2222'
   echo '  DestInterface : virbr0'
@@ -377,6 +378,25 @@ _log() { #{{{
 }
 #}}}
 
+_create_conf() { #{{{
+  if [[ -f ${CONF_FILE} ]]; then
+    echo -e "[${C_YELLOW}WARNING${C_OFF}] ${CONF_FILE} is already exists."
+    return
+  fi
+  cat <<EOM > ${CONF_FILE} 
+#
+# Port-forwarding configuraton for QEMU hook
+#
+# DomainName    Zone      Source      Destination         DestInterface
+#------------------------------------------------------------------------
+## example
+# ex-host       public    10022/tcp   192.168.122.2:22    virbr0
+
+EOM
+  echo -e "${C_CYAN}${CONF_FILE} created.${C_OFF}"
+}
+#}}}
+
 __setupcolor
 
 # check options {{{
@@ -390,6 +410,9 @@ if [ "$1" = "-d" ]; then
 elif [ "$1" = "-v" ]; then
   VERBOSE=yes
   shift 1
+elif [ "$1" = "-c" ]; then
+  _create_conf
+  exit
 fi
 
 TARGET_GUEST_NAME="$1"

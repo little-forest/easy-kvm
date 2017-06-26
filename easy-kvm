@@ -86,6 +86,11 @@ __show_info() { #{{{
 }
 #}}}
 
+__show_warn() { #{{{
+  echo -e "[${C_YELLOW}WARNING${C_OFF}] $1"
+}
+#}}}
+
 __show_error() { #{{{
   echo -e "[${C_RED}ERROR${C_OFF}] $1"
 }
@@ -124,16 +129,17 @@ _usage() { #{{{
   echo "  setup で Kickstart 用 config ファイルを作成し、"
   echo "  create で config ファイルを元に仮想マシンを作成します。"
   echo ""
-  echo "  $SCRIPT_NAME setup KS_CFG_PATH -w -h HOST_NAME -o OS [-c VCPUS] "
+  echo "  $SCRIPT_NAME setup KS_CFG_PATH [-w] -h HOST_NAME -o OS [-c VCPUS] "
   echo "                     [-m MEMORY_SIZE] [-d DISK_SIZE] [-f STORAGE_FORMAT] "
   echo "                     -i IP_ADDR/NET_MASK [-g GATEWAY] [-n NAME_SERVER] "
   echo "                     [-p ISO_PATH]"
   echo "    KS_CFG_PATH にKickstart用設定ファイルを出力します."
   echo ""
-  echo "  $SCRIPT_NAME create KS_CFG_PATH [-w] [-O ISO_PATH]"
+  echo "  $SCRIPT_NAME create KS_CFG_PATH [-w] [-r] [-O ISO_PATH]"
   echo "    KS_CFG_PATH で指定したパスの Kickstart 用設定ファイル"
   echo "    を元に仮想マシンを構成します."
   echo "          -w : Why run (show only virt-install command line)"
+  echo "          -r : Review kickstart file (use with -w)"
   echo "          -h : host(kvm domain) name"
   echo "          -o : OS:VERSION (ex. centos:7.3)"
   echo "          -c : number of virtual cpus (default:$NUM_CPU)"
@@ -145,7 +151,8 @@ _usage() { #{{{
   echo "          -g : Gateway's ip address (default: $GATEWAY)"
   echo "          -n : Name server's ip address (default: $NAME_SERVER)"
   echo "          -p : OS's iso image path"
-  echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、そうでなければ ks ファイル中の ISO ファイルを読み込む"
+  echo "          -O : Offline install 引数が指定されていればそのパスのISOを読み込み、"
+  echo "               そうでなければ ks ファイル中の ISO ファイルを読み込む"
   echo ""
   echo "  $SCRIPT_NAME install-qemu-forward"
   echo "    qemu-forward スクリプトをインストールします."
@@ -258,6 +265,7 @@ _setup() { #{{{
 
   echo -e "${C_GREEN}Creating kick start configuration... ${C_OFF}"
   TMPFILE=`mktemp -p /dev/shm`
+  echo "## Created by easy-kvm at `LANG=C date` on `hostname`" >> "$KS_PATH"
   echo "# param HOST_NAME=$HOST_NAME" >> "$KS_PATH"
   echo "# param NUM_CPU=$NUM_CPU" >> "$KS_PATH"
   echo "# param MEM_SIZE=$MEM_SIZE" >> "$KS_PATH"
@@ -267,7 +275,8 @@ _setup() { #{{{
   echo "# param OS_LOCATION=$OS_LOCATION" >> "$KS_PATH"
   echo "# param ISO_PATH=$ISO_PATH" >> "$KS_PATH"
 
-  cat $KS_TEMPLATE $POST_SCRIPT_TEMPLATE | sed -re "s/%\{HOST_NAME\}/${HOST_NAME}/g" \
+  cat $KS_TEMPLATE $POST_SCRIPT_TEMPLATE | sed -r \
+    -e "s/%\{HOST_NAME\}/${HOST_NAME}/g" \
     -e "s/%\{IP_ADDR\}/${IP_ADDR}/g" \
     -e "s/%\{NET_MASK\}/${NET_MASK}/g" \
     -e "s/%\{GATEWAY\}/${GATEWAY}/g" \
@@ -287,7 +296,19 @@ _setup() { #{{{
     sed -i -re 's/#url/url/' $TMPFILE
   fi
 
-  cat "$TMPFILE" >> "$KS_PATH"
+  # include additional template
+  local COMMON_TPL=$TPL_PS_DIR/post-script_common.tpl 
+  if [[ `grep -c '#%%INCLUDE%%' $TMPFILE` -eq 1 ]]; then
+    if [[ -f ${COMMON_TPL} ]]; then
+      cat <(sed -nre '1,/^#%%INCLUDE%%/p' $TMPFILE) >> "$KS_PATH"
+      cat $COMMON_TPL >> "$KS_PATH"
+      cat <(sed -nre '/^#%%INCLUDE%%/,$p' $TMPFILE) >> "$KS_PATH"
+    else
+      echo -e "${C_YELLOW}$COMMON_TPL is not found.${C_OFF}"
+      cat $TMPFILE >> $KS_PATH
+    fi
+  fi
+
   echo -e "${C_CYAN}Kick start configuration was created as${C_OFF} $KS_PATH"
   rm $TMPFILE
 
@@ -361,6 +382,14 @@ _create() { #{{{
     sed -i -re "s|^[# \\t]*url[ \\t]+.+$|url --url ${OS_LOCATION}|" ${KS_WORK_FILE}
   fi
 
+  # copy ssh public key
+  local PUB_KEY_FILE=~/.ssh/id_rsa.pub
+  if [[ -f ${PUB_KEY_FILE} ]]; then
+    local PUB_KEY="`cat ${PUB_KEY_FILE}`"
+    sed -i -re "s|^#%%PUBLIC_KEY%%|${PUB_KEY}|" ${KS_WORK_FILE}
+    echo "public key copied from ${PUB_KEY_FILE}"
+  fi
+
   # check volume
   VOL_NAME=${HOST_NAME}
   VOL_PATH=${VOL_BASE}/${VOL_NAME}.${VOL_EXT}
@@ -398,6 +427,7 @@ _create() { #{{{
   
   echo ''
 
+  # Kickstart file review
   if [ ! "$WHY_RUN" ]; then
     __confirm "Are you sure ?" || exit
   fi
@@ -440,16 +470,24 @@ _create() { #{{{
     if [[ $VIRT_STATUS -eq 0 ]]; then
       echo -e "${C_GREEN}Successfully installed.${C_OFF}"
       echo ''
-      echo 'If you want to define /etc/hosts , prease execute folowing command.'
-      echo "echo '${IP_ADDR} ${HOST_NAME}' >> /etc/hosts"
+      echo '1. If you want to define /etc/hosts , please execute folowing command.'
+      echo "  echo '${IP_ADDR} ${HOST_NAME}' >> /etc/hosts"
+
+      echo ''
+      echo '2. If you want to forward ssh port, please execute folowing command.'
+      local LOCAL_PORT=`expr '(' 100 + ${IP_ADDR##*.} ')' '*' 100 + 22`
+      local CMD=`echo "echo '${HOST_NAME}		public	${LOCAL_PORT}/tcp	${IP_ADDR}:22	virbr0'" | expand -t 10`
+      echo "  $CMD >> /etc/qemu-forward.conf && ${QEMU_HOOK} -v ${HOST_NAME} started"
     else
       echo -e "${C_RED}Install failed.${C_OFF}"
     fi
   else
     # dry run
-    echo -e "${C_YELLOW}[${KS_WORK_FILE} from ${KS_CFG_PATH}]${C_OFF}"
-    cat "${KS_WORK_FILE}"
-    echo ''
+    if [[ ${REVIEW_KS_FILE} ]]; then
+      echo -e "${C_YELLOW}[${KS_WORK_FILE} from ${KS_CFG_PATH}]${C_OFF}"
+      cat "${KS_WORK_FILE}"
+      echo ''
+    fi
     echo -e "${C_YELLOW}[Why run]${C_OFF}"
     echo "virt-install ${VIRT_OPT[@]} --extra-args=\"ks=$KS_URL console=tty0 console=ttyS0,115200n8\""
   fi
@@ -471,6 +509,8 @@ _install-qemu-forward() { #{{{
     if [[ $? -eq 0 ]]; then
       echo -e "${C_GREEN}Successfully installed.${C_OFF}"
       ls -la ${QEMU_HOOK}
+      # create configuration file
+      ${QEMU_HOOK} -c
     else
       echo -e "${C_RED}Install failed.${C_OFF} ${SCRIPT_BASE}/qemu-forward to ${QEMU_HOOK}"
       exit 1
@@ -505,10 +545,16 @@ case "$1" in
     ;;
 esac
 
+if [[ "$KS_PATH" =~ ^-.+ ]]; then
+  __show_warn "Kickstart path '${KS_PATH}' starts with hyphen. Please check whether your arguments is incorrect."
+  exit 1
+fi
+
 # Get options
-while getopts wh:o:c:m:f:d:i:g:n:p:OH OPT; do
+while getopts wrh:o:c:m:f:d:i:g:n:p:OH OPT; do
   case "$OPT" in
     w) WHY_RUN=yes ;;
+    r) REVIEW_KS_FILE=yes ;;
     h) HOST_NAME="$OPTARG" ;;
     o) OS="$OPTARG" ;;
     c) NUM_CPU="$OPTARG" ;;

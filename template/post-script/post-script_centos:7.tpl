@@ -4,16 +4,17 @@
 @core
 %end
 
-%post
+%post --interpreter /bin/bash
 # Install EPEL
-/bin/rpm -ivh http://ftp.iij.ad.jp/pub/linux/fedora/epel/7/x86_64/e/epel-release-7-5.noarch.rpm
+/bin/rpm -ivh http://ftp.iij.ad.jp/pub/linux/fedora/epel/7/x86_64/e/epel-release-7-9.noarch.rpm
 
+# Install packages
 /usr/bin/yum install -y --nogpgcheck vim wget nkf dstat bzip2 pigz
 
 ###############################################################################
 # /etc/profile
 
-/bin/cat << 'EOM' >> /etc/profile
+/bin/cat << 'EOC' >> /etc/profile
 #------------------------------------------------------------------------------
 # Prompt setting
 #------------------------------------------------------------------------------
@@ -29,45 +30,42 @@ eval `dircolors -b /etc/DIR_COLORS`
 # aliases
 #------------------------------------------------------------------------------
 alias vir='/usr/bin/vim -R'
-function ccat() { /usr/local/scripts/highlight -c cat $@; }
-function cless() { /usr/local/scripts/highlight -c less $@; }
-function cfollow() { /usr/local/scripts/highlight -c follow $@; }
 
 #------------------------------------------------------------------------------
 # Editor setting
 #------------------------------------------------------------------------------
 EDITOR=/usr/bin/vim; export EDITOR
-EOM
+EOC
 
 ###############################################################################
 # /root/.bash_profile
-/bin/cat << 'EOM' >> /root/.bash_profile
+/bin/cat << 'EOC' >> /root/.bash_profile
 PATH=$PATH:/usr/local/scripts
 export PATH
-EOM
+EOC
 
 ###############################################################################
 # /root/.bashrc
-/bin/cat << 'EOM' >> /root/.bashrc
+/bin/cat << 'EOC' >> /root/.bashrc
 alias vi='vim'
 
 HISTTIMEFORMAT='%Y-%m-%d %T '; export HISTTIMEFORMAT
-EOM
+EOC
 
 ###############################################################################
 # /etc/rc.local
-/bin/cat << 'EOM' >> /etc/rc.local
+/bin/cat << 'EOC' >> /etc/rc.local
 
 # Suppress display power management
-setterm -blank 0 -powersave off -powerdown off
+#setterm -blank 0 -powersave off -powerdown off
 
 # Disable flow control
 stty -ixon
-EOM
+EOC
 
 ###############################################################################
 # /root/.inputrc
-/bin/cat << 'EOM' >> /root/.inputrc
+/bin/cat << 'EOC' >> /etc/.inputrc.custom
 
 # Key Customize for history search
 "\C-n":history-search-forward
@@ -75,7 +73,8 @@ EOM
 
 "\C-b":backward-word
 "\C-f":forward-word
-EOM
+EOC
+/bin/ln -s /etc/.inputrc.custom /root/.inputrc
 
 ###############################################################################
 # NTP Setting for CentOS 7
@@ -84,20 +83,22 @@ EOM
 /usr/bin/systemctl enable chronyd
 
 #/bin/sed -e 's/^server /#server /' -i /etc/ntp.conf
-#/bin/cat << 'EOM' >> /etc/ntp.conf
+#/bin/cat << 'EOC' >> /etc/ntp.conf
 #server -4 ntp.nict.jp
 #server -4 ntp1.jst.mfeed.ad.jp
 #server -4 ntp2.jst.mfeed.ad.jp
 #server -4 ntp3.jst.mfeed.ad.jp
-#EOM
+#EOC
 #
 #/usr/sbin/ntpdate -4 -d ntp.nict.jp
 #/sbin/chkconfig ntpd on
 #/sbin/service ntpd start
 
+#%%INCLUDE%%
+
 ###############################################################################
-# update all packages
-/usr/bin/yum update -y --nogpgcheck
+# update all packages (It will take a long time)
+# /usr/bin/yum update -y --nogpgcheck
 
 %end
 
