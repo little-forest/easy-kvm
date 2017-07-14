@@ -5,7 +5,7 @@
 #---------------------------------------------------------------------
 # prepare maintenance user
 #---------------------------------------------------------------------
-TARGET_USER=maint
+TARGET_USER=admin
 TARGET_GROUP=${TARGET_USER}
 TARGET_UID=499
 TARGET_GID=499
