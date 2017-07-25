@@ -393,7 +393,7 @@ _create() { #{{{
   # check volume
   VOL_NAME=${HOST_NAME}
   VOL_PATH=${VOL_BASE}/${VOL_NAME}.${VOL_EXT}
-  virsh vol-list --pool=$POOL | grep "$VOL_NAME"
+  virsh vol-list --pool=$POOL | grep -E "${VOL_NAME}\.${VOL_EXT}$"
   [[ $? -eq 0 ]] && __error_end "Volume is already exists. : $VOL_PATH ($POOL/$VOL_NAME)"
   [[ -f "$VOL_PATH" ]] && __error_end "Volume image file is already exists. : $VOL_PATH ($POOL/$VOL_NAME)"
   VOL_NAME=${POOL}/${HOST_NAME}
