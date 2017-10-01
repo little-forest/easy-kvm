@@ -5,10 +5,9 @@
 %end
 
 %post --interpreter /bin/bash
-# Install EPEL
-/bin/rpm -ivh http://ftp.iij.ad.jp/pub/linux/fedora/epel/7/x86_64/e/epel-release-7-9.noarch.rpm
 
 # Install packages
+/usr/bin/yum install -y --nogpgcheck epel-release
 /usr/bin/yum install -y --nogpgcheck vim wget nkf dstat bzip2 pigz
 
 ###############################################################################
