@@ -419,6 +419,11 @@ _create() { #{{{
   echo -e "${C_CYAN}Net mask       ${C_OFF}: $NET_MASK"
   echo -e "${C_CYAN}Gateway        ${C_OFF}: $GATEWAY"
   echo -e "${C_CYAN}Name server    ${C_OFF}: $NAME_SERVER"
+  if [[ -f ${PUB_KEY_FILE} ]]; then
+    echo -e "${C_CYAN}Public key     ${C_OFF}: $PUB_KEY_FILE"
+  else
+    echo -e "${C_CYAN}Public key     ${C_OFF}: ${C_YELLOW}NOT FOUND${C_OFF} ($PUB_KEY_FILE)"
+  fi
   echo -ne "${C_CYAN}Install from   ${C_OFF}: "
   if [[ "${OFFLINE}" ]]; then
     echo "${ISO_PATH}"
