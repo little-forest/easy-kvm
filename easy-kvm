@@ -37,8 +37,11 @@ OS_LOCATION_CENTOS7=${MIRROR_BASE}/7/os/x86_64/
 ISO_LOCATION_CENTOS72=${MIRROR_BASE}/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso 
 OS_LOCATION_CENTOS72=${MIRROR_BASE}/7.2.1511/os/x86_64/
 
-ISO_LOCATION_CENTOS73=${MIRROR_BASE}/7.3.1611/isos/x86_64/CentOS-7-x86_64-DVD-1611.iso
-OS_LOCATION_CENTOS73=${MIRROR_BASE}/7.3.1611/os/x86_64/
+ISO_LOCATION_CENTOS73=${MIRROR_BASE}/7.4.1708/isos/x86_64/CentOS-7-x86_64-DVD-1708.iso
+OS_LOCATION_CENTOS73=${MIRROR_BASE}/7.4.1708/os/x86_64/
+
+ISO_LOCATION_CENTOS75=${MIRROR_BASE}/7.5.1804/isos/x86_64/CentOS-7-x86_64-DVD-1804.iso
+OS_LOCATION_CENTOS75=${MIRROR_BASE}/7.5.1804/os/x86_64/
 
 VOL_BASE=/var/lib/libvirt/images
 POOL=default
@@ -141,7 +144,7 @@ _usage() { #{{{
   echo "          -w : Why run (show only virt-install command line)"
   echo "          -r : Review kickstart file (use with -w)"
   echo "          -h : host(kvm domain) name"
-  echo "          -o : OS:VERSION (ex. centos:7.3)"
+  echo "          -o : OS:VERSION (ex. centos:7.5)"
   echo "          -c : number of virtual cpus (default:$NUM_CPU)"
   echo "          -m : memory size (MBytes) (defaullt:$MEM_SIZE Mbytes)"
   echo "          -d : disk size (GBytes) (default:$DISK_SIZE Gbytes)"
